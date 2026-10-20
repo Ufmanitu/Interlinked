@@ -1,7 +1,7 @@
 // Minimális tesztfutó (böngésző és Node). A test-*.js fájlok a FILES listában vannak.
 import { computeScale, VIRTUAL_W, VIRTUAL_H } from './core-screen.js';
 
-const FILES = []; // pl. './test-tether.js' (S005-től)
+const FILES = ['./test-player.js']; // további test-*.js fájlok ide
 const tests = [];
 
 export function test(name, fn) { tests.push({ name, fn }); }
