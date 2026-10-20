@@ -1,7 +1,7 @@
 # STATE
 
-Utolsó kész lépés: S002
-Verzió: S002 · 2026-10-20
+Utolsó kész lépés: S003 (a test-camera.js még nincs a test-index.js FILES listájában)
+Verzió: S003 · 2026-10-20
 
 ## Fájl-index (API)
 - index.html: canvas#game 960x540, modul: main.js
@@ -10,8 +10,10 @@ Verzió: S002 · 2026-10-20
 - core-input.js: Input (update(), get(p) -> {x,y,interact,ability1,ability2,menu,*Pressed}), setKeys(p,map), setPadButtons(map), DEFAULT_KEYS, DEFAULT_PAD
 - core-debug.js: initDebug() (window error/unhandledrejection -> overlay), logError(msg), showReport(title, lines, ok), copyText(t)
 - game-player.js: createPlayer(i,x,y), desiredVelocity(p,inp), stepPlayer(p,inp,dt), PLAYER_SIZE/SPEED/COLORS (tiszta logika; S006-tól a póráz dönt)
+- game-camera.js: CAM_VIEW, CAM_CONFIG {k:6, margin:48}, createCamera(x,y), midpoint(a,b), maxLag(delta,viewSize,margin), stepCamera(cam,a,b,dt,cfg,view) (fps-független simítás + késés-korlát), cameraOffset(cam,view) -> egész pixel bal-felső sarok (tiszta logika)
+- test-camera.js: kamera-tesztek (felvenni a test-index.js FILES listájába)
 - test-player.js: játékos-tesztek (a FILES listában)
-- main.js: STEP=1/60, fix lépésű loop, render (játékosok + verzió + FPS), initDebug, window.__game {game(players), input, screen}
+- main.js: STEP=1/60, fix lépésű loop, kamera-követés, render (ideiglenes rács + játékosok kamera-offsettel + verzió + FPS), initDebug, window.__game {game(players,camera), input, screen}
 - test-index.js: test(name,fn), assert, eq, near, runAll(), formatResults(); FILES lista a test-*.js fájloknak; Node: `node test-index.js`
 - tests.html: futtatja a teszteket, eredmény a képernyőn + Másolás gomb
 
@@ -25,7 +27,7 @@ P1: WASD, F interakció, G/H képesség, Q menü. P2: nyilak, , interakció, . /
 - Tesztek Node-ban futtatva (package.json type=module kell hozzá helyben; a repóban nincs).
 
 ## Hangolt értékek
-- (nincs)
+- kamera: k=6, margin=48 px (S003, kezdőérték)
 
 ## Ismert hibák
 - (nincs)
