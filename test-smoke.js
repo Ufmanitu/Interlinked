@@ -52,3 +52,37 @@ test('smoke: 600 kocka két szkriptelt játékossal, póráz-invariánsok', asyn
   assert(moved, 'a játékosok nem mozdultak');
   assert(maxX >= L.x - 1e-3 && maxY >= L.y - 1e-3, 'a szkript nem feszítette meg a pórázt');
 });
+
+test('smoke: változó L_eff (szűkül/tágul), a távolság sosem nő a korlát fölött, nincs NaN', async () => {
+  const { createPlayer, desiredVelocity } = await import('./game-player.js');
+  const { createCamera, stepCamera } = await import('./game-camera.js');
+  const { computeTether } = await import('./tether-logic.js');
+  const S = [ // P1, P2: kifelé, majd befelé, majd újra kifelé (átlósan is)
+    [[0, 200, -1, -1], [200, 400, 1, 1], [400, 600, -1, 0]],
+    [[0, 200, 1, 1], [200, 400, -1, -1], [400, 600, 1, 0]],
+  ];
+  const inp = (p, f) => { for (const [s, e, x, y] of S[p]) if (f >= s && f < e) return { x, y }; return { x: 0, y: 0 }; };
+  const P = [createPlayer(0, 400, 300), createPlayer(1, 460, 330)];
+  const cam = createCamera(430, 315);
+  let hold = { x: 0, y: 0 }, minL = Infinity, maxL = 0;
+  for (let f = 0; f < FRAMES; f++) {
+    const w = 0.5 + 0.5 * Math.cos((f / 300) * 2 * Math.PI); // 1 -> 0 -> 1
+    const Lc = { x: 200 + 300 * w, y: 120 + 200 * w };       // L_eff folyamatosan változik
+    minL = Math.min(minL, Lc.x); maxL = Math.max(maxL, Lc.x);
+    const d0 = { x: Math.abs(P[1].x - P[0].x), y: Math.abs(P[1].y - P[0].y) };
+    const v = P.map((p, i) => desiredVelocity(p, inp(i, f)));
+    const t = computeTether({ a: P[0], b: P[1], va: v[0], vb: v[1], L: Lc, k: { a: 0.5, b: 0.5 }, dt: DT });
+    P[0].x += t.a.x * DT; P[0].y += t.a.y * DT;
+    P[1].x += t.b.x * DT; P[1].y += t.b.y * DT;
+    stepCamera(cam, P[0], P[1], DT);
+    for (const p of P) assert(Number.isFinite(p.x) && Number.isFinite(p.y), `NaN pozíció a ${f}. kockában`);
+    assert(Number.isFinite(cam.x) && Number.isFinite(cam.y), `NaN kamera a ${f}. kockában`);
+    for (const ax of ['x', 'y']) {
+      const d1 = Math.abs(P[1][ax] - P[0][ax]);
+      assert(d1 <= Math.max(Lc[ax], d0[ax]) + EPS, `a távolság (${ax}) nőtt a korlát fölött a ${f}. kockában: ${d1}`);
+      if (t.mode[ax] === 'hold') hold[ax]++;
+    }
+  }
+  assert(maxL - minL > 100, 'az L_eff nem változott');
+  assert(hold.x > 0 && hold.y > 0, 'a holtpont egyik tengelyen sem fordult elő');
+});
