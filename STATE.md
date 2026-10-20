@@ -1,6 +1,6 @@
 # STATE
 
-Utolsó kész lépés: S003 (a test-camera.js még nincs a test-index.js FILES listájában)
+Utolsó kész lépés: S003
 Verzió: S003 · 2026-10-20
 
 ## Fájl-index (API)
@@ -11,7 +11,7 @@ Verzió: S003 · 2026-10-20
 - core-debug.js: initDebug() (window error/unhandledrejection -> overlay), logError(msg), showReport(title, lines, ok), copyText(t)
 - game-player.js: createPlayer(i,x,y), desiredVelocity(p,inp), stepPlayer(p,inp,dt), PLAYER_SIZE/SPEED/COLORS (tiszta logika; S006-tól a póráz dönt)
 - game-camera.js: CAM_VIEW, CAM_CONFIG {k:6, margin:48}, createCamera(x,y), midpoint(a,b), maxLag(delta,viewSize,margin), stepCamera(cam,a,b,dt,cfg,view) (fps-független simítás + késés-korlát), cameraOffset(cam,view) -> egész pixel bal-felső sarok (tiszta logika)
-- test-camera.js: kamera-tesztek (felvenni a test-index.js FILES listájába)
+- test-camera.js: kamera-tesztek (a FILES listában)
 - test-player.js: játékos-tesztek (a FILES listában)
 - main.js: STEP=1/60, fix lépésű loop, kamera-követés, render (ideiglenes rács + játékosok kamera-offsettel + verzió + FPS), initDebug, window.__game {game(players,camera), input, screen}
 - test-index.js: test(name,fn), assert, eq, near, runAll(), formatResults(); FILES lista a test-*.js fájloknak; Node: `node test-index.js`
