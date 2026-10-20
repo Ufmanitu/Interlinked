@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Interlinked tests</title>
+<style>html,body{margin:0;background:#111;color:#fff;font:14px monospace}</style>
+</head>
+<body>
+<script type="module">
+import { initDebug, showReport } from './core-debug.js';
+import { runAll, formatResults } from './test-index.js';
+initDebug();
+const f = formatResults(await runAll());
+document.body.style.background = f.ok ? '#0a3a0a' : '#3a0a0a';
+showReport(f.title, f.lines, f.ok);
+</script>
+</body>
+</html>

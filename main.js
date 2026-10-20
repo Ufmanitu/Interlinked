@@ -1,6 +1,9 @@
 import { createScreen, VIRTUAL_W, VIRTUAL_H } from './core-screen.js';
 import { Input } from './core-input.js';
 import { VERSION, VERSION_DATE } from './version.js';
+import { initDebug } from './core-debug.js';
+
+initDebug();
 
 export const STEP = 1 / 60; // fix 60 Hz logikai lépés
 const MAX_FRAME = 0.25;     // spirál-védelem
