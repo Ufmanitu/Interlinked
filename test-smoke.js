@@ -299,3 +299,34 @@ test('smoke: futásidejű konfig-váltás 600 kockán (nincs NaN/fal-átfedés, 
   }
   assert(maxL - minL > 80, 'a konfig nem változtatta az L_eff-et');
 });
+
+test('smoke: k-hook + húzás-stamina 600 kockán (TetherConfig kapcsoló, kimerülés, felépülés, HUD, nincs NaN)', async () => {
+  const { createPlayer } = await import('./game-player.js');
+  const { createTetherSystem, stepTetherSystem } = await import('./tether-system.js');
+  const { tetherHudLines } = await import('./tether-config.js');
+  const tc = await mkConfig();
+  const sys = createTetherSystem({ ...tc.systemConfig(), L: { x: 200, y: 200 } });
+  const P = [Object.assign(createPlayer(0, 400, 300), { strength: 1.2 }), Object.assign(createPlayer(1, 500, 300), { load: 0.5 })];
+  const hud = () => tetherHudLines(sys, tc).filter(l => l.startsWith('stamina  a '));
+  let sawEx = false, hudEx = '';
+  stepTetherSystem(sys, P, [{ x: 0, y: 0 }, { x: 0, y: 0 }], DT);
+  eq(hud().length, 0); // kapcsoló nélkül nincs stamina-sor
+  eq(tc.apply('stamina'), true);
+  for (let f = 0; f < FRAMES; f++) {
+    const ex = P[0].exhausted;
+    stepTetherSystem(sys, P, [f < 450 ? { x: -1, y: 0 } : { x: 1, y: 0 }, { x: 0, y: 0 }], DT);
+    for (const p of P) {
+      assert(Number.isFinite(p.x) && Number.isFinite(p.y), `NaN pozíció a ${f}. kockában`);
+      assert(p.stamina >= 0 && p.stamina <= p.staminaMax, `stamina tartományon kívül a ${f}. kockában`);
+    }
+    assert(Math.abs(P[1].x - P[0].x) <= 200 + EPS, `L_eff túllépve a ${f}. kockában`);
+    if (ex && sys.mode.x === 'pull-a') { // kimerült húzó: 0.5 · 1.2 · (1/1.5) · 0.5 = 0.2
+      sawEx = true; near(sys.k.a, 0.2, 1e-12); near(P[0].vx, -P[0].speed * 0.2, 1e-9); hudEx = hud()[0] || '';
+    }
+  }
+  assert(sawEx, 'a húzó nem merült ki');
+  assert(/kimerült/.test(hudEx) && /0\/100/.test(hudEx), 'a HUD nem mutatja a kimerültséget: ' + hudEx);
+  eq(P[0].exhausted, false); assert(P[0].stamina > 20, 'nem épült fel');
+  near(sys.k.a, 0.2 * 2, 1e-12);
+  eq(tc.apply('stamina'), true); eq(hud().length, 0);
+});

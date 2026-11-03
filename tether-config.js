@@ -3,8 +3,8 @@
 // Futásidőben billentyűkkel állítható, localStorage-ban megmarad.
 // L_normal = (nézet - 2*margó) * lScale (GDD 4.1: 960x540 és 48 px margó -> 864x444). A kamera ugyanezt a margót
 // használja a késés-korláthoz, így lScale <= 1 mellett a játékosok mindig a képben maradnak.
-// A k alap a húzó lassítás-szorzója; az S010 k-hook ezt szorozza az erő/súly/terep tényezőkkel,
-// a pullStamina kapcsolót az S010 húzás-stamina költsége olvassa.
+// A k alap a húzó lassítás-szorzója; a k-hook (tether-system.js, S010) ezt szorozza az erő/súly+teher/terep tényezőkkel,
+// a pullStamina kapcsoló a húzás-stamina költséget kapcsolja (tether-system.js).
 import { CAM_VIEW, CAM_CONFIG } from './game-camera.js';
 
 export const TETHER_DEFAULTS = Object.freeze({ margin: CAM_CONFIG.margin, lScale: 1, k: 0.5, pullStamina: false });
@@ -92,9 +92,9 @@ export class TetherConfig {
     return changed;
   }
 
-  // A póráz-rendszer cfg-je: L és k élő függvény, a konfig változása a következő lépésben él.
+  // A póráz-rendszer cfg-je: L, k (bázis; a k-hook szorozza) és a húzás-stamina kapcsoló élő függvény, a változás a következő lépésben él.
   systemConfig(extra = {}) {
-    return { ...extra, L: () => this.lNormal(), k: () => this.k };
+    return { ...extra, L: () => this.lNormal(), k: () => this.k, pullStamina: () => this.pullStamina };
   }
 
   // A kamera cfg-je: a margó élő (getter).
@@ -125,9 +125,9 @@ export function bindTetherConfigKeys(tc, target = typeof window !== 'undefined' 
 
 // Debug HUD szöveg (S019-től i18n.js t('kulcs')).
 export const HUD_TEXT = {
-  hu: { title: 'PÓRÁZ', leff: 'L_eff', stretch: 'stretch', mode: 'mód', lnorm: 'L_normal', margin: 'margó', stamina: 'húzás-stamina', base: 'alap', on: 'be', off: 'ki',
+  hu: { title: 'PÓRÁZ', leff: 'L_eff', stretch: 'stretch', mode: 'mód', lnorm: 'L_normal', margin: 'margó', stamina: 'húzás-stamina', pool: 'stamina', exh: 'kimerült', base: 'alap', on: 'be', off: 'ki',
         keys: '1/2 L  3/4 margó  5/6 k  7 stamina  8 alap  9 HUD' },
-  en: { title: 'TETHER', leff: 'L_eff', stretch: 'stretch', mode: 'mode', lnorm: 'L_normal', margin: 'margin', stamina: 'pull stamina', base: 'base', on: 'on', off: 'off',
+  en: { title: 'TETHER', leff: 'L_eff', stretch: 'stretch', mode: 'mode', lnorm: 'L_normal', margin: 'margin', stamina: 'pull stamina', pool: 'stamina', exh: 'exhausted', base: 'base', on: 'on', off: 'off',
         keys: '1/2 L  3/4 margin  5/6 k  7 stamina  8 reset  9 HUD' },
 };
 
@@ -137,7 +137,9 @@ const fmt = (v, d = 0) => (Number.isFinite(v) ? v.toFixed(d) : String(v));
 export function tetherHudLines(sys, tc, S = HUD_TEXT.hu) {
   const k = sys.k, ln = tc.lNormal();
   const kText = Math.abs(k.a - k.b) < 1e-9 ? fmt(k.a, 2) : `a ${fmt(k.a, 2)}  b ${fmt(k.b, 2)}`;
-  return [
+  const st = sys.stamina;
+  const stText = p => `${fmt(p.value)}/${fmt(p.max)}${p.exhausted ? ' ' + S.exh : ''}`;
+  const lines = [
     S.title,
     `${S.leff}    x ${fmt(sys.L.x)}  y ${fmt(sys.L.y)} px`,
     `${S.stretch}  x ${fmt(sys.stretch.x, 2)}  y ${fmt(sys.stretch.y, 2)}`,
@@ -148,4 +150,6 @@ export function tetherHudLines(sys, tc, S = HUD_TEXT.hu) {
     `${S.stamina} ${tc.pullStamina ? S.on : S.off}`,
     S.keys,
   ];
+  if (tc.pullStamina && st) lines.splice(8, 0, `${S.pool}  a ${stText(st.a)}  b ${stText(st.b)}`); // csak bekapcsolt húzás-staminánál
+  return lines;
 }
