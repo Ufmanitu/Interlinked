@@ -1,7 +1,7 @@
 # STATE
 
-Utolsó kész lépés: S010
-Verzió: S010 · 2026-11-03
+Utolsó kész lépés: S011
+Verzió: S011 · 2026-11-03
 
 ## Fájl-index (API)
 - index.html: canvas#game 960x540, modul: main.js
@@ -24,6 +24,7 @@ Verzió: S010 · 2026-11-03
 - main.js: STEP=1/60, fix lépésű loop, TetherConfig (tc) -> createTetherSystem(tc.systemConfig({walls})) + stepCamera(.., tc.cameraConfig()), billentyűk (bindTetherConfigKeys), stepTetherSystem (a mozgást a póráz dönti, falakkal), stepTetherVisual, render (ideiglenes rács + falak + drawTether (fonal-görbe sötét körvonallal) + játékosok kamera-offsettel + verzió + FPS + debug HUD: drawTetherHud), initDebug, window.__game {game(players,camera,tether,walls), input, screen, tether, tc, vis}
 - tether-visual.js (S009; tiszta logika): VISUAL_CONFIG {segments 24, maxSag 60, sagDist 160, smooth 14, up/down küszöbök (taut .7/.6, critical .98/.92), widths 2/3/4, colors}, LEVELS, tetherTension(sys) -> 0..1 (max stretch, nem 'free' mód -> 1, NaN->0), nextLevel(prev,s,cfg) (hiszterézis), tetherCurve(a,b,s,cfg) -> [{x,y}] (parabola, s=1 egyenes), tetherStyle(s,level,cfg) -> {level,color 'rgb(..)',width}, createTetherVisual() -> {s,level,on(fn)->leiratkozó,emit}, stepTetherVisual(vis,sys,dt) -> események [{type:'level',from,to,s}] (simított s; a hanghoz: vis.on)
 - test-tether-visual.js: S009 tesztek (tension, görbe, stílus, hiszterézis, eseménylánc, 600 kockás integráció a póráz-rendszerrel; FILES-ben)
+- test-feel.js (S011, a FILES-ben): a M0 playteszt-checklist automata megfelelője, 8 teszt (szabad mozgás, húzás ~k·sebesség + a társ viszi, holtpont, feloldás, követés büntetés nélkül, húzás-stamina 3-8 mp kimerülés / <2,5 mp felépülés, fuzz: táv. <= L_eff + nincs NaN, játékosok a képben húzás/holtpont közben); helperek: setup, run, atLimit
 - test-index.js: test(name,fn), assert, eq, near, runAll(), formatResults(); FILES lista a test-*.js fájloknak; Node: `node test-index.js`
 - tests.html: futtatja a teszteket, eredmény a képernyőn + Másolás gomb
 
@@ -46,10 +47,12 @@ Póráz-hangolás (felső számsor): 1/2 L_normal -/+, 3/4 margó -/+, 5/6 k -/+
 - k-hook (S010): k = bázis k · húzó ereje · (referencia-súly / húzott súlya+terhe, 0.25..4) · terep (a húzó helyén) · (kimerült húzó: ·0.5), 0..1-re vágva; az alap (identitás) játékosokkal k = bázis. A fal-levágás is húzásnak számít a stamina szempontjából (a mode a döntő). Az S048 az általános staminát (sprint, gyűjtés, HUD) ugyanezekre a p.stamina/staminaMax/exhausted mezőkre építse.
 - Állapot S010-nél: 108/108 zöld (node test-index.js, package.json type=module kell helyben); 7 szándékos hiba (súly-szorzó, kimerültség, költség, terep, erő, hiszterézis, kimerült-flag) mindegyikét elbuktatják a tesztek; main.js node --check rendben, main.js nem változott.
 
+- Állapot S011-nél: a M0 playteszt a szabály szerint automata (test-feel.js), a felhasználótól nem kér semmit. A tesztek Node-ban NEM futottak (a játékmodulok nem voltak a gépen) -> átnézve (importok, nevek, számítások a PULL_STAMINA/K_HOOK értékeivel); node --check rendben. Következő futtatáskor ellenőrizd: node test-index.js.
+
 ## Hangolt értékek
 - póráz (TetherConfig, S008 kezdőérték): margin=48 px, lScale=1 -> L_normal 864x444 px, k=0.5 (placeholder, S010), pullStamina=ki
-- k-hook és húzás-stamina (S010 kezdőérték, S011 playteszt hangolja): K_HOOK és PULL_STAMINA lásd fent (5 mp folyamatos húzás után kimerül, 1,3 mp pihenés után felépül); bázis k továbbra is TetherConfig (0.5)
-- fonal (S009): lásd VISUAL_CONFIG fent (kezdőértékek, S011 playteszt hangolja)
+- k-hook és húzás-stamina (S010 kezdőérték, S011: az automata feel-tesztek alapján változatlan): K_HOOK és PULL_STAMINA lásd fent (5 mp folyamatos húzás után kimerül, 1,3 mp pihenés után felépül); bázis k továbbra is TetherConfig (0.5)
+- fonal (S009): lásd VISUAL_CONFIG fent (kezdőértékek, S011-ben változatlan)
 - kamera: k=6 (S003), margin = tc.margin (alap 48 px)
 
 ## Ismert hibák
