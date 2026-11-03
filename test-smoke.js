@@ -6,6 +6,7 @@ import { test, assert, eq, near } from './test-index.js';
 const MODULES = [
   './version.js', './core-screen.js', './core-input.js', './core-debug.js',
   './game-player.js', './game-camera.js', './tether-logic.js', './game-collision.js', './game-walls.js', './tether-system.js', './tether-config.js',
+  './world-tiles.js', './world-tilemap.js', './world-arena.js', './render-tiles.js',
 ];
 const FRAMES = 600;
 const DT = 1 / 60;

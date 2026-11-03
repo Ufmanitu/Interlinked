@@ -5,9 +5,12 @@ import { initDebug } from './core-debug.js';
 import { createPlayer } from './game-player.js';
 import { createCamera, stepCamera, cameraOffset } from './game-camera.js';
 import { createTetherSystem, stepTetherSystem } from './tether-system.js';
-import { generateWalls } from './game-walls.js';
+import { generateWalls, ARENA_TILES } from './game-walls.js';
 import { TetherConfig, bindTetherConfigKeys, tetherHudLines } from './tether-config.js';
 import { createTetherVisual, stepTetherVisual, tetherCurve, tetherStyle } from './tether-visual.js';
+import { mapToWalls } from './world-tilemap.js';
+import { buildArenaMap, arenaKeepFree } from './world-arena.js';
+import { createTileAtlas, drawTiles } from './render-tiles.js';
 
 initDebug();
 
@@ -18,15 +21,19 @@ const canvas = document.getElementById('game');
 const screen = createScreen(canvas);
 const input = new Input();
 
-const players = [createPlayer(0, 400, 270), createPlayer(1, 540, 270)];
+const SPAWN = [[400, 270], [540, 270]];
+const players = SPAWN.map(([x, y], i) => createPlayer(i, x, y));
 const camera = createCamera((players[0].x + players[1].x) / 2, (players[0].y + players[1].y) / 2);
-const walls = generateWalls();
+// Tile-világ: a greybox-aréna falaiból + dekorációból tile-térkép; az ütközés a térkép ütköző tile-jaiból jön.
+const tileMap = buildArenaMap(generateWalls(), ARENA_TILES.w, ARENA_TILES.h, { keepFree: arenaKeepFree(SPAWN) });
+const walls = mapToWalls(tileMap);
+const atlas = createTileAtlas();
 const tc = new TetherConfig();                 // hangolható póráz-értékek (localStorage), billentyűk: 1-9
 const tether = createTetherSystem(tc.systemConfig({ walls }));
 const camCfg = tc.cameraConfig();
 bindTetherConfigKeys(tc);
 const vis = createTetherVisual();              // a fonal megjelenített állapota; vis.on(fn): szint-események (hanghoz)
-const game = { time: 0, ticks: 0, fps: 0, players, camera, tether, walls };
+const game = { time: 0, ticks: 0, fps: 0, players, camera, tether, walls, tileMap };
 
 function update(dt) {
   input.update();
@@ -35,32 +42,6 @@ function update(dt) {
   stepCamera(game.camera, game.players[0], game.players[1], dt, camCfg);
   game.time += dt;
   game.ticks++;
-}
-
-// Ideiglenes rács a kamera-mozgás láthatóságáért (S012-től tile-ok).
-function drawGrid(ctx, o) {
-  const T = 32;
-  ctx.fillStyle = '#161c28';
-  const x0 = Math.floor(o.x / T), x1 = Math.ceil((o.x + VIRTUAL_W) / T);
-  const y0 = Math.floor(o.y / T), y1 = Math.ceil((o.y + VIRTUAL_H) / T);
-  for (let ty = y0; ty < y1; ty++) {
-    for (let tx = x0; tx < x1; tx++) {
-      if ((tx + ty) & 1) ctx.fillRect(tx * T - o.x, ty * T - o.y, T, T);
-      if (tx % 10 === 0 && ty % 10 === 0) {
-        ctx.fillStyle = '#2a3750';
-        ctx.fillRect(tx * T - o.x, ty * T - o.y, T, T);
-        ctx.fillStyle = '#161c28';
-      }
-    }
-  }
-}
-
-function drawWalls(ctx, o) {
-  ctx.fillStyle = '#3a4660';
-  for (const w of game.walls) {
-    if (w.x + w.w < o.x || w.x > o.x + VIRTUAL_W || w.y + w.h < o.y || w.y > o.y + VIRTUAL_H) continue;
-    ctx.fillRect(w.x - o.x, w.y - o.y, w.w, w.h);
-  }
 }
 
 // A fonal: lazán lógó görbe, a szín és a vastagság a feszülés szerint (laza/feszes/kritikus).
@@ -106,8 +87,7 @@ function render() {
   const o = cameraOffset(game.camera, { w: VIRTUAL_W, h: VIRTUAL_H });
   ctx.fillStyle = '#10141c';
   ctx.fillRect(0, 0, VIRTUAL_W, VIRTUAL_H);
-  drawGrid(ctx, o);
-  drawWalls(ctx, o);
+  drawTiles(ctx, atlas, game.tileMap, o.x, o.y, VIRTUAL_W, VIRTUAL_H);
   drawTether(ctx, o);
   for (const p of game.players) {
     ctx.fillStyle = p.color;
@@ -134,4 +114,4 @@ function frame(now) {
 }
 requestAnimationFrame(frame);
 
-window.__game = { game, input, screen, tether, tc, vis };
+window.__game = { game, input, screen, tether, tc, vis, tileMap, atlas };
