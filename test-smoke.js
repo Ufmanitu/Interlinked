@@ -4,7 +4,7 @@ import { test, assert } from './test-index.js';
 
 const MODULES = [
   './version.js', './core-screen.js', './core-input.js', './core-debug.js',
-  './game-player.js', './game-camera.js', './tether-logic.js',
+  './game-player.js', './game-camera.js', './tether-logic.js', './game-collision.js', './game-walls.js', './tether-system.js',
 ];
 const FRAMES = 600;
 const DT = 1 / 60;
@@ -85,4 +85,38 @@ test('smoke: változó L_eff (szűkül/tágul), a távolság sosem nő a korlát
   }
   assert(maxL - minL > 100, 'az L_eff nem változott');
   assert(hold.x > 0 && hold.y > 0, 'a holtpont egyik tengelyen sem fordult elő');
+});
+
+test('smoke: aréna-falakkal 600 kocka két szkriptelt játékossal (nincs fal-átfedés, póráz-invariáns, nincs NaN)', async () => {
+  const { createPlayer } = await import('./game-player.js');
+  const { createCamera, stepCamera } = await import('./game-camera.js');
+  const { createTetherSystem, stepTetherSystem } = await import('./tether-system.js');
+  const { generateWalls } = await import('./game-walls.js');
+  const { collides } = await import('./game-collision.js');
+  const walls = generateWalls();
+  const P = [createPlayer(0, 400, 270), createPlayer(1, 540, 270)];
+  const sys = createTetherSystem({ L, k: 0.5, walls });
+  const cam = createCamera(470, 270);
+  const S = [ // a bal szoba falainak (keret, válaszfal) irányába is mennek
+    [[0, 200, -1, 0], [200, 300, 0, 1], [300, 450, 1, 0], [450, 600, 0, -1]],
+    [[0, 150, 0, -1], [150, 350, 1, 0], [350, 500, 0, 1], [500, 600, -1, 0]],
+  ];
+  const inp = (p, f) => { for (const [s, e, x, y] of S[p]) if (f >= s && f < e) return { x, y }; return { x: 0, y: 0 }; };
+  let blocked = false;
+  for (let f = 0; f < FRAMES; f++) {
+    const d0 = { x: Math.abs(P[1].x - P[0].x), y: Math.abs(P[1].y - P[0].y) };
+    stepTetherSystem(sys, P, [inp(0, f), inp(1, f)], DT);
+    stepCamera(cam, P[0], P[1], DT);
+    for (const p of P) {
+      assert(Number.isFinite(p.x) && Number.isFinite(p.y), `NaN pozíció a ${f}. kockában`);
+      assert(!collides(p, walls), `fal-átfedés a ${f}. kockában`);
+    }
+    assert(Number.isFinite(cam.x) && Number.isFinite(cam.y), `NaN kamera a ${f}. kockában`);
+    for (const ax of ['x', 'y']) {
+      const d1 = Math.abs(P[1][ax] - P[0][ax]);
+      assert(d1 <= Math.max(L[ax], d0[ax]) + EPS, `távolság (${ax}) nőtt a ${f}. kockában: ${d1}`);
+    }
+    if (sys.blocked.a.x || sys.blocked.a.y || sys.blocked.b.x || sys.blocked.b.y) blocked = true;
+  }
+  assert(blocked, 'a szkript egyszer sem ütközött falnak');
 });

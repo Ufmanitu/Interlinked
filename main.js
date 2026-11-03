@@ -5,6 +5,7 @@ import { initDebug } from './core-debug.js';
 import { createPlayer } from './game-player.js';
 import { createCamera, stepCamera, cameraOffset } from './game-camera.js';
 import { createTetherSystem, stepTetherSystem } from './tether-system.js';
+import { generateWalls } from './game-walls.js';
 
 initDebug();
 
@@ -17,8 +18,9 @@ const input = new Input();
 
 const players = [createPlayer(0, 400, 270), createPlayer(1, 540, 270)];
 const camera = createCamera((players[0].x + players[1].x) / 2, (players[0].y + players[1].y) / 2);
-const tether = createTetherSystem();
-const game = { time: 0, ticks: 0, fps: 0, players, camera, tether };
+const walls = generateWalls();
+const tether = createTetherSystem({ walls });
+const game = { time: 0, ticks: 0, fps: 0, players, camera, tether, walls };
 
 function update(dt) {
   input.update();
@@ -46,12 +48,21 @@ function drawGrid(ctx, o) {
   }
 }
 
+function drawWalls(ctx, o) {
+  ctx.fillStyle = '#3a4660';
+  for (const w of game.walls) {
+    if (w.x + w.w < o.x || w.x > o.x + VIRTUAL_W || w.y + w.h < o.y || w.y > o.y + VIRTUAL_H) continue;
+    ctx.fillRect(w.x - o.x, w.y - o.y, w.w, w.h);
+  }
+}
+
 function render() {
   const ctx = screen.ctx;
   const o = cameraOffset(game.camera, { w: VIRTUAL_W, h: VIRTUAL_H });
   ctx.fillStyle = '#10141c';
   ctx.fillRect(0, 0, VIRTUAL_W, VIRTUAL_H);
   drawGrid(ctx, o);
+  drawWalls(ctx, o);
   for (const p of game.players) {
     ctx.fillStyle = p.color;
     ctx.fillRect(Math.round(p.x - p.w / 2) - o.x, Math.round(p.y - p.h / 2) - o.y, p.w, p.h);
