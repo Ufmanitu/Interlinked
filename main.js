@@ -6,6 +6,7 @@ import { createPlayer } from './game-player.js';
 import { createCamera, stepCamera, cameraOffset } from './game-camera.js';
 import { createTetherSystem, stepTetherSystem } from './tether-system.js';
 import { generateWalls } from './game-walls.js';
+import { TetherConfig, bindTetherConfigKeys, tetherHudLines } from './tether-config.js';
 
 initDebug();
 
@@ -19,13 +20,16 @@ const input = new Input();
 const players = [createPlayer(0, 400, 270), createPlayer(1, 540, 270)];
 const camera = createCamera((players[0].x + players[1].x) / 2, (players[0].y + players[1].y) / 2);
 const walls = generateWalls();
-const tether = createTetherSystem({ walls });
+const tc = new TetherConfig();                 // hangolható póráz-értékek (localStorage), billentyűk: 1-9
+const tether = createTetherSystem(tc.systemConfig({ walls }));
+const camCfg = tc.cameraConfig();
+bindTetherConfigKeys(tc);
 const game = { time: 0, ticks: 0, fps: 0, players, camera, tether, walls };
 
 function update(dt) {
   input.update();
   stepTetherSystem(tether, game.players, [input.get(0), input.get(1)], dt);
-  stepCamera(game.camera, game.players[0], game.players[1], dt);
+  stepCamera(game.camera, game.players[0], game.players[1], dt, camCfg);
   game.time += dt;
   game.ticks++;
 }
@@ -56,6 +60,20 @@ function drawWalls(ctx, o) {
   }
 }
 
+// Debug HUD: póráz-értékek (stretch tengelyenként, k, L_eff) és a konfig; a 9-es billentyű ki/be kapcsolja.
+function drawTetherHud(ctx, x, y) {
+  const lines = tetherHudLines(tether, tc);
+  const lh = 14;
+  ctx.font = '12px monospace';
+  ctx.textBaseline = 'top';
+  let w = 0;
+  for (const l of lines) w = Math.max(w, ctx.measureText(l).width);
+  ctx.fillStyle = 'rgba(8,12,20,0.6)';
+  ctx.fillRect(x - 4, y - 4, Math.ceil(w) + 8, lines.length * lh + 8);
+  ctx.fillStyle = tether.stretch.x >= 0.999 || tether.stretch.y >= 0.999 ? '#ffb45a' : '#9fb4d0'; // a korlátnál borostyán
+  lines.forEach((l, i) => ctx.fillText(l, x, y + i * lh));
+}
+
 function render() {
   const ctx = screen.ctx;
   const o = cameraOffset(game.camera, { w: VIRTUAL_W, h: VIRTUAL_H });
@@ -71,6 +89,7 @@ function render() {
   ctx.textBaseline = 'top';
   ctx.fillStyle = '#9fb4d0';
   ctx.fillText(`Interlinked ${VERSION} (${VERSION_DATE})  FPS ${game.fps.toFixed(0)}`, 8, 8);
+  if (tc.hud) drawTetherHud(ctx, 8, 28);
 }
 
 let last = performance.now(), acc = 0, fpsAcc = 0, fpsN = 0;
@@ -87,4 +106,4 @@ function frame(now) {
 }
 requestAnimationFrame(frame);
 
-window.__game = { game, input, screen, tether };
+window.__game = { game, input, screen, tether, tc };

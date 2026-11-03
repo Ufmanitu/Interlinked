@@ -1,10 +1,11 @@
 // Füst-teszt: az összes DOM-független modul betöltése + ~600 képkocka két szkriptelt játékossal.
+// S008: a TetherConfig (póráz-konfig) egység- és futásidejű tesztjei a fájl végén.
 // Új, DOM-független modult vegyél fel a MODULES listába (main.js és a renderelők kimaradnak).
-import { test, assert } from './test-index.js';
+import { test, assert, eq, near } from './test-index.js';
 
 const MODULES = [
   './version.js', './core-screen.js', './core-input.js', './core-debug.js',
-  './game-player.js', './game-camera.js', './tether-logic.js', './game-collision.js', './game-walls.js', './tether-system.js',
+  './game-player.js', './game-camera.js', './tether-logic.js', './game-collision.js', './game-walls.js', './tether-system.js', './tether-config.js',
 ];
 const FRAMES = 600;
 const DT = 1 / 60;
@@ -119,4 +120,182 @@ test('smoke: aréna-falakkal 600 kocka két szkriptelt játékossal (nincs fal-�
     if (sys.blocked.a.x || sys.blocked.a.y || sys.blocked.b.x || sys.blocked.b.y) blocked = true;
   }
   assert(blocked, 'a szkript egyszer sem ütközött falnak');
+});
+
+// ---- S008: TetherConfig ----
+function memStorage(init = {}) {
+  const m = new Map(Object.entries(init));
+  return { getItem: k => (m.has(k) ? m.get(k) : null), setItem: (k, v) => { m.set(k, String(v)); } };
+}
+async function mkConfig(storage = null) {
+  const { TetherConfig } = await import('./tether-config.js');
+  return new TetherConfig(storage);
+}
+const dump = o => JSON.stringify(o);
+
+test('config: alapértékek = TETHER_CONFIG, L_normal képlet', async () => {
+  const { TETHER_CONFIG } = await import('./tether-system.js');
+  const { CAM_CONFIG } = await import('./game-camera.js');
+  const tc = await mkConfig();
+  eq(tc.k, TETHER_CONFIG.k); eq(tc.margin, CAM_CONFIG.margin);
+  eq(tc.lNormal().x, TETHER_CONFIG.L.x); eq(tc.lNormal().y, TETHER_CONFIG.L.y);
+  tc.margin = 100; tc.lScale = 0.5;
+  eq(tc.lNormal().x, 380); eq(tc.lNormal().y, 170);
+});
+
+test('config: lépések, határok, kerekítés, ismeretlen művelet', async () => {
+  const tc = await mkConfig();
+  eq(tc.apply('k+'), true); eq(tc.k, 0.55);
+  for (let i = 0; i < 30; i++) tc.apply('k+');
+  eq(tc.k, 1); eq(tc.apply('k+'), false);
+  for (let i = 0; i < 30; i++) tc.apply('k-');
+  eq(tc.k, 0); eq(tc.apply('k-'), false);
+  for (let i = 0; i < 40; i++) tc.apply('lScale-');
+  eq(tc.lScale, 0.1);
+  for (let i = 0; i < 40; i++) tc.apply('lScale+');
+  eq(tc.lScale, 1);
+  for (let i = 0; i < 40; i++) tc.apply('margin+');
+  eq(tc.margin, 160);
+  for (let i = 0; i < 40; i++) tc.apply('margin-');
+  eq(tc.margin, 0);
+  eq(tc.apply('nincs-ilyen'), false); eq(tc.apply('constructor'), false); eq(tc.apply(undefined), false);
+});
+
+test('config: stamina-kapcsoló, reset, HUD (nem mentett)', async () => {
+  const { TETHER_STORAGE_KEY } = await import('./tether-config.js');
+  const st = memStorage();
+  const tc = await mkConfig(st);
+  eq(tc.apply('stamina'), true); eq(tc.pullStamina, true);
+  tc.apply('k+'); tc.apply('margin+'); tc.apply('lScale-');
+  eq(tc.apply('hud'), true); eq(tc.hud, false);
+  assert(!('hud' in JSON.parse(st.getItem(TETHER_STORAGE_KEY))), 'a HUD-állapot nem menthető');
+  eq(tc.apply('reset'), true);
+  eq(tc.k, 0.5); eq(tc.margin, 48); eq(tc.lScale, 1); eq(tc.pullStamina, false);
+  eq(tc.apply('reset'), false); eq(tc.hud, false);
+});
+
+test('config: localStorage mentés/betöltés, rossz adatok, hibázó tároló', async () => {
+  const { TETHER_STORAGE_KEY: K } = await import('./tether-config.js');
+  const st = memStorage();
+  const a = await mkConfig(st);
+  a.apply('k-'); a.apply('margin+'); a.apply('lScale-'); a.apply('stamina');
+  eq(dump((await mkConfig(st)).values()), dump(a.values()));
+  eq(JSON.parse(st.getItem(K)).v, 1);
+  const D = dump((await mkConfig()).values());
+  for (const raw of ['{', 'null', '[]', '"x"', dump({ v: 2, k: 0.9 }), dump({ k: 0.9 })]) {
+    eq(dump((await mkConfig(memStorage({ [K]: raw }))).values()), D, raw);
+  }
+  const c = (await mkConfig(memStorage({ [K]: dump({ v: 1, margin: 999, lScale: -3, k: '0.9', pullStamina: 'igen' }) }))).values();
+  eq(c.margin, 160); eq(c.lScale, 0.1); eq(c.k, 0.5); eq(c.pullStamina, false);
+  const boom = { getItem() { throw new Error('x'); }, setItem() { throw new Error('x'); } };
+  const t = await mkConfig(boom);
+  eq(t.k, 0.5); t.apply('k+'); eq(t.k, 0.55);
+});
+
+test('config: élő k és L_normal a póráz-rendszerben (sys.k, sys.L)', async () => {
+  const { createPlayer } = await import('./game-player.js');
+  const { createTetherSystem, stepTetherSystem } = await import('./tether-system.js');
+  const tc = await mkConfig();
+  const sys = createTetherSystem(tc.systemConfig({ walls: [] }));
+  const Lx = tc.lNormal().x;
+  const P = [createPlayer(0, 1000, 300), createPlayer(1, 1000 + Lx, 300)]; // a korlátnál
+  const pull = [{ x: -1, y: 0 }, { x: 0, y: 0 }];                           // A kifelé húz, B áll
+  stepTetherSystem(sys, P, pull, DT);
+  near(P[0].vx, -P[0].speed * 0.5, 1e-9); eq(sys.k.a, 0.5); eq(sys.k.b, 0.5); eq(sys.L.x, Lx);
+  tc.k = 0; stepTetherSystem(sys, P, pull, DT);
+  near(P[0].vx, 0, 1e-9); eq(sys.k.a, 0);
+  tc.lScale = 0.5; stepTetherSystem(sys, P, [{ x: 0, y: 0 }, { x: 0, y: 0 }], DT);
+  near(sys.L.x, 432, 1e-9); near(sys.L.y, 222, 1e-9);
+  const s2 = createTetherSystem({ k: { a: 0.3, b: 0.7 } }); stepTetherSystem(s2, P, [{ x: 0, y: 0 }, { x: 0, y: 0 }], DT);
+  eq(s2.k.a, 0.3); eq(s2.k.b, 0.7);
+});
+
+test('config: billentyű-leképezés, kötés, nincs ütközés a játékos-kiosztással', async () => {
+  const { TETHER_KEYS, tetherKeyAction, bindTetherConfigKeys } = await import('./tether-config.js');
+  const { DEFAULT_KEYS } = await import('./core-input.js');
+  eq(tetherKeyAction({ code: 'Digit1' }), 'lScale-'); eq(tetherKeyAction({ code: 'Digit6' }), 'k+');
+  eq(tetherKeyAction({ code: 'Digit1', ctrlKey: true }), null); eq(tetherKeyAction({ code: 'KeyW' }), null);
+  eq(tetherKeyAction({ code: 'constructor' }), null); eq(tetherKeyAction(null), null);
+  const used = new Set(DEFAULT_KEYS.flatMap(k => Object.values(k)));
+  for (const code of Object.keys(TETHER_KEYS)) assert(!used.has(code), 'kiosztás-ütközés: ' + code);
+  const all = await mkConfig();
+  for (const a of Object.values(TETHER_KEYS)) all.apply(a); // minden művelet kezelt
+  const tc = await mkConfig();
+  let handler = null, removed = false, prevented = 0;
+  const target = {
+    addEventListener: (t, h) => { eq(t, 'keydown'); handler = h; },
+    removeEventListener: (t, h) => { removed = h === handler; },
+  };
+  const off = bindTetherConfigKeys(tc, target);
+  handler({ code: 'Digit6', preventDefault() { prevented++; } });
+  eq(tc.k, 0.55); eq(prevented, 1);
+  handler({ code: 'KeyW', preventDefault() { prevented++; } });
+  eq(tc.k, 0.55); eq(prevented, 1);
+  off(); assert(removed, 'a leválasztás nem működik');
+  eq(typeof bindTetherConfigKeys(tc, null), 'function');
+});
+
+test('config: HUD sorok (stretch, k, L_eff), HU/EN kulcsok azonosak, nincs NaN/undefined', async () => {
+  const { tetherHudLines, HUD_TEXT } = await import('./tether-config.js');
+  const { createTetherSystem } = await import('./tether-system.js');
+  eq(Object.keys(HUD_TEXT.en).join(), Object.keys(HUD_TEXT.hu).join());
+  const tc = await mkConfig();
+  const sys = createTetherSystem(tc.systemConfig());
+  for (const S of [HUD_TEXT.hu, HUD_TEXT.en]) assert(!/NaN|undefined/.test(tetherHudLines(sys, tc, S).join('\n')), 'alap HUD hibás');
+  sys.L = { x: 864, y: 444 }; sys.stretch = { x: 0.5, y: Infinity }; sys.mode = { x: 'free', y: 'hold' }; sys.k = { a: 0.5, b: 0.25 };
+  const txt = tetherHudLines(sys, tc).join('\n');
+  for (const part of ['864', '444', '0.50', 'Infinity', 'hold', 'a 0.50  b 0.25', '100%', '48 px']) assert(txt.includes(part), 'hiányzik a HUD-ból: ' + part);
+});
+
+test('config: fuzz — határok, 0 < L <= nézet-2*margó, mentés-betöltés azonos', async () => {
+  const { TETHER_LIMITS, TETHER_KEYS } = await import('./tether-config.js');
+  const acts = Object.values(TETHER_KEYS);
+  const st = memStorage();
+  const tc = await mkConfig(st);
+  let seed = 12345;
+  const r = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+  for (let i = 0; i < 3000; i++) {
+    tc.apply(acts[Math.floor(r() * acts.length)]);
+    for (const key of ['margin', 'lScale', 'k']) {
+      assert(tc[key] >= TETHER_LIMITS[key].min && tc[key] <= TETHER_LIMITS[key].max, `${key} tartományon kívül: ${tc[key]}`);
+    }
+    const L = tc.lNormal();
+    assert(L.x > 0 && L.y > 0 && L.x <= 960 - 2 * tc.margin + 1e-9 && L.y <= 540 - 2 * tc.margin + 1e-9, 'L_normal hibás');
+  }
+  eq(dump((await mkConfig(st)).values()), dump(tc.values()));
+});
+
+test('smoke: futásidejű konfig-váltás 600 kockán (nincs NaN/fal-átfedés, távolság <= max(L_eff, előző), játékosok a képben)', async () => {
+  const { createPlayer } = await import('./game-player.js');
+  const { createCamera, stepCamera, CAM_VIEW } = await import('./game-camera.js');
+  const { createTetherSystem, stepTetherSystem } = await import('./tether-system.js');
+  const { generateWalls } = await import('./game-walls.js');
+  const { collides } = await import('./game-collision.js');
+  const walls = generateWalls();
+  const tc = await mkConfig();
+  const sys = createTetherSystem(tc.systemConfig({ walls }));
+  const camCfg = tc.cameraConfig();
+  const P = [createPlayer(0, 400, 270), createPlayer(1, 540, 270)];
+  const cam = createCamera(470, 270);
+  const ACTS = ['lScale-', 'k-', 'margin+', 'lScale-', 'k+', 'margin+', 'stamina', 'margin-', 'lScale+', 'reset'];
+  let minL = Infinity, maxL = 0;
+  for (let f = 0; f < FRAMES; f++) {
+    if (f > 0 && f % 30 === 0) tc.apply(ACTS[(f / 30) % ACTS.length]);
+    const d0 = { x: Math.abs(P[1].x - P[0].x), y: Math.abs(P[1].y - P[0].y) };
+    stepTetherSystem(sys, P, [scripted(0, f), scripted(1, f)], DT);
+    stepCamera(cam, P[0], P[1], DT, camCfg);
+    eq(camCfg.margin, tc.margin);
+    minL = Math.min(minL, sys.L.x); maxL = Math.max(maxL, sys.L.x);
+    assert(Number.isFinite(cam.x) && Number.isFinite(cam.y), `NaN kamera a ${f}. kockában`);
+    for (const p of P) {
+      assert(Number.isFinite(p.x) && Number.isFinite(p.y), `NaN pozíció a ${f}. kockában`);
+      assert(!collides(p, walls), `fal-átfedés a ${f}. kockában`);
+      assert(Math.abs(p.x - cam.x) <= CAM_VIEW.w / 2 + EPS && Math.abs(p.y - cam.y) <= CAM_VIEW.h / 2 + EPS, `játékos a képen kívül a ${f}. kockában`);
+    }
+    for (const ax of ['x', 'y']) {
+      const d1 = Math.abs(P[1][ax] - P[0][ax]);
+      assert(d1 <= Math.max(sys.L[ax], d0[ax]) + EPS, `távolság (${ax}) nőtt a ${f}. kockában: ${d1}`);
+    }
+  }
+  assert(maxL - minL > 80, 'a konfig nem változtatta az L_eff-et');
 });

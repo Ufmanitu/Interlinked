@@ -21,12 +21,20 @@ export function createTetherSystem(cfg = {}) {
     L: { x: 0, y: 0 },                      // az utolsó lépés L_eff-je
     stretch: { x: 0, y: 0 },                // az utolsó lépés stretch-e tengelyenként
     mode: { x: 'free', y: 'free' },         // free | hold | pull-a | pull-b
+    k: { a: 0, b: 0 },                      // az utolsó lépés k-ja (a / b húzásakor)
     blocked: { a: { x: false, y: false }, b: { x: false, y: false } }, // az utolsó lépésben a fal levágta-e a mozgást
   };
 }
 
 function resolve(v, players) {
   return typeof v === 'function' ? v(players) : v;
+}
+
+// k normalizálása {a,b}-re (a computeTether alapértéke: 1).
+function normK(k) {
+  if (typeof k === 'number') return { a: k, b: k };
+  if (k && typeof k === 'object') return { a: k.a, b: k.b };
+  return { a: 1, b: 1 };
 }
 
 export function resolveL(cfg, players) {
@@ -55,6 +63,7 @@ export function stepTetherSystem(sys, players, inputs, dt) {
     sys.blocked = { a: { x: false, y: false }, b: { x: false, y: false } };
   }
   sys.L = L;
+  sys.k = normK(k);
   sys.stretch = t.stretch;
   sys.mode = t.mode;
   return t;
