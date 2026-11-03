@@ -1,7 +1,7 @@
 # STATE
 
-Utolsó kész lépés: S008
-Verzió: S008 · 2026-11-03
+Utolsó kész lépés: S009
+Verzió: S009 · 2026-11-03
 
 ## Fájl-index (API)
 - index.html: canvas#game 960x540, modul: main.js
@@ -21,7 +21,9 @@ Verzió: S008 · 2026-11-03
 - test-player.js: játékos- és póráz-rendszer tesztek (a FILES listában; helper move(p,inp,dt) póráz nélkül)
 - test-tether.js: póráz-szabályok és határesetek (stretch=1, EPS-tolerancia, mindkettő áll, ellentétes húzás, követés-határ, k-korlátozás, L<=0, átlós, tengelyenkénti L, x/y-szimmetria, bemenet-érintetlenség), tartós szimulációk (holtpont, húzás, követés, szűkülő/táguló L_eff), fuzz-invariánsok; helper: run(pa,pb,frames,Lf,vaf,vbf,ka,kb) egy tengelyt léptet
 - test-smoke.js: modulbetöltés + 600 kocka két szkriptelt játékossal (póráz-invariáns: távolság <= L_eff, nincs NaN) + 600 kocka folyamatosan változó L_eff-fel (távolság <= max(L, előző táv.)) + aréna-falak; S008: config-tesztek (alapértékek, lépések/határok, kapcsolók/reset, localStorage + rossz adat, élő k/L a rendszerben, billentyűk, HUD, fuzz) és 600 kocka futásidejű konfig-váltással (nincs NaN/fal-átfedés, táv. <= max(L_eff, előző), játékosok a képben); új DOM-független modult vedd fel a MODULES listába
-- main.js: STEP=1/60, fix lépésű loop, TetherConfig (tc) -> createTetherSystem(tc.systemConfig({walls})) + stepCamera(.., tc.cameraConfig()), billentyűk (bindTetherConfigKeys), stepTetherSystem (a mozgást a póráz dönti, falakkal), render (ideiglenes rács + falak + játékosok kamera-offsettel + verzió + FPS + debug HUD: drawTetherHud), initDebug, window.__game {game(players,camera,tether,walls), input, screen, tether, tc}
+- main.js: STEP=1/60, fix lépésű loop, TetherConfig (tc) -> createTetherSystem(tc.systemConfig({walls})) + stepCamera(.., tc.cameraConfig()), billentyűk (bindTetherConfigKeys), stepTetherSystem (a mozgást a póráz dönti, falakkal), stepTetherVisual, render (ideiglenes rács + falak + drawTether (fonal-görbe sötét körvonallal) + játékosok kamera-offsettel + verzió + FPS + debug HUD: drawTetherHud), initDebug, window.__game {game(players,camera,tether,walls), input, screen, tether, tc, vis}
+- tether-visual.js (S009; tiszta logika): VISUAL_CONFIG {segments 24, maxSag 60, sagDist 160, smooth 14, up/down küszöbök (taut .7/.6, critical .98/.92), widths 2/3/4, colors}, LEVELS, tetherTension(sys) -> 0..1 (max stretch, nem 'free' mód -> 1, NaN->0), nextLevel(prev,s,cfg) (hiszterézis), tetherCurve(a,b,s,cfg) -> [{x,y}] (parabola, s=1 egyenes), tetherStyle(s,level,cfg) -> {level,color 'rgb(..)',width}, createTetherVisual() -> {s,level,on(fn)->leiratkozó,emit}, stepTetherVisual(vis,sys,dt) -> események [{type:'level',from,to,s}] (simított s; a hanghoz: vis.on)
+- test-tether-visual.js: S009 tesztek (tension, görbe, stílus, hiszterézis, eseménylánc, 600 kockás integráció a póráz-rendszerrel; FILES-ben)
 - test-index.js: test(name,fn), assert, eq, near, runAll(), formatResults(); FILES lista a test-*.js fájloknak; Node: `node test-index.js`
 - tests.html: futtatja a teszteket, eredmény a képernyőn + Másolás gomb
 
@@ -38,8 +40,12 @@ Póráz-hangolás (felső számsor): 1/2 L_normal -/+, 3/4 margó -/+, 5/6 k -/+
 - Konfig (S008): a hangolható póráz-értékek egy helyen (TetherConfig); L_normal = (nézet-2*margó)*lScale, a kamera ugyanazt a margót használja (lScale <= 1 -> a játékosok a képben maradnak). A k alap a húzó lassítás-szorzója; az S010 k-hook ezt szorozza, az S027 FieldSystem az L_normal-ból lerp-el.
 - Póráz: a távolság-szabály tengelyenként él; k = a húzó lassítás-szorzója (placeholder, a valódi k-hook S010); a hívó a saját pozícióit a visszaadott sebességgel lépteti.
 
+- Fonal (S009): a rajz a main.js drawTether-ében (kamera-offset, egész pixel); a szint-váltás hiszterézises, a szín folytonos (laza kék -> feszes sárga -> kritikus piros). Az S010+ hang a vis.on(...) eseményekre kössön.
+- Állapot S009-nél: a tether-visual tesztek (8) Node-ban lefutottak zölden; a test-tether-visual integrációs tesztje és a teljes csomag NEM futott (a játékmodulok nem voltak a gépen) -> átnézve (importok, nevek). main.js: node --check rendben.
+
 ## Hangolt értékek
 - póráz (TetherConfig, S008 kezdőérték): margin=48 px, lScale=1 -> L_normal 864x444 px, k=0.5 (placeholder, S010), pullStamina=ki
+- fonal (S009): lásd VISUAL_CONFIG fent (kezdőértékek, S011 playteszt hangolja)
 - kamera: k=6 (S003), margin = tc.margin (alap 48 px)
 
 ## Ismert hibák

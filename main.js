@@ -7,6 +7,7 @@ import { createCamera, stepCamera, cameraOffset } from './game-camera.js';
 import { createTetherSystem, stepTetherSystem } from './tether-system.js';
 import { generateWalls } from './game-walls.js';
 import { TetherConfig, bindTetherConfigKeys, tetherHudLines } from './tether-config.js';
+import { createTetherVisual, stepTetherVisual, tetherCurve, tetherStyle } from './tether-visual.js';
 
 initDebug();
 
@@ -24,11 +25,13 @@ const tc = new TetherConfig();                 // hangolható póráz-értékek 
 const tether = createTetherSystem(tc.systemConfig({ walls }));
 const camCfg = tc.cameraConfig();
 bindTetherConfigKeys(tc);
+const vis = createTetherVisual();              // a fonal megjelenített állapota; vis.on(fn): szint-események (hanghoz)
 const game = { time: 0, ticks: 0, fps: 0, players, camera, tether, walls };
 
 function update(dt) {
   input.update();
   stepTetherSystem(tether, game.players, [input.get(0), input.get(1)], dt);
+  stepTetherVisual(vis, tether, dt);
   stepCamera(game.camera, game.players[0], game.players[1], dt, camCfg);
   game.time += dt;
   game.ticks++;
@@ -60,6 +63,30 @@ function drawWalls(ctx, o) {
   }
 }
 
+// A fonal: lazán lógó görbe, a szín és a vastagság a feszülés szerint (laza/feszes/kritikus).
+function drawTether(ctx, o) {
+  const [a, b] = game.players;
+  const pts = tetherCurve(a, b, vis.s);
+  const st = tetherStyle(vis.s, vis.level);
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  const path = () => {
+    ctx.beginPath();
+    pts.forEach((p, i) => {
+      const x = Math.round(p.x) - o.x, y = Math.round(p.y) - o.y;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+  };
+  path();
+  ctx.strokeStyle = 'rgba(8,12,20,0.55)'; // sötét körvonal az olvashatóságért
+  ctx.lineWidth = st.width + 2;
+  ctx.stroke();
+  path();
+  ctx.strokeStyle = st.color;
+  ctx.lineWidth = st.width;
+  ctx.stroke();
+}
+
 // Debug HUD: póráz-értékek (stretch tengelyenként, k, L_eff) és a konfig; a 9-es billentyű ki/be kapcsolja.
 function drawTetherHud(ctx, x, y) {
   const lines = tetherHudLines(tether, tc);
@@ -81,6 +108,7 @@ function render() {
   ctx.fillRect(0, 0, VIRTUAL_W, VIRTUAL_H);
   drawGrid(ctx, o);
   drawWalls(ctx, o);
+  drawTether(ctx, o);
   for (const p of game.players) {
     ctx.fillStyle = p.color;
     ctx.fillRect(Math.round(p.x - p.w / 2) - o.x, Math.round(p.y - p.h / 2) - o.y, p.w, p.h);
@@ -106,4 +134,4 @@ function frame(now) {
 }
 requestAnimationFrame(frame);
 
-window.__game = { game, input, screen, tether, tc };
+window.__game = { game, input, screen, tether, tc, vis };
