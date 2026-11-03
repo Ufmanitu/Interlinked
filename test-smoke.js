@@ -6,7 +6,7 @@ import { test, assert, eq, near } from './test-index.js';
 const MODULES = [
   './version.js', './core-screen.js', './core-input.js', './core-debug.js',
   './game-player.js', './game-camera.js', './tether-logic.js', './game-collision.js', './game-walls.js', './tether-system.js', './tether-config.js',
-  './world-tiles.js', './world-tilemap.js', './world-arena.js', './render-tiles.js',
+  './world-tiles.js', './world-tilemap.js', './world-arena.js', './render-tiles.js', './world-noise.js', './world-chunk.js',
 ];
 const FRAMES = 600;
 const DT = 1 / 60;
@@ -330,4 +330,32 @@ test('smoke: k-hook + húzás-stamina 600 kockán (TetherConfig kapcsoló, kimer
   eq(P[0].exhausted, false); assert(P[0].stamina > 20, 'nem épült fel');
   near(sys.k.a, 0.2 * 2, 1e-12);
   eq(tc.apply('stamina'), true); eq(hud().length, 0);
+});
+
+// ---- S013: chunk-streaming szimuláció (csak világ-modulok; nincs DOM) ----
+test('smoke: 600 kocka chunk-betöltés két mozgó pozíció körül (nincs kivétel, érvényes id-k, újragenerálás azonos)', async () => {
+  const { generateChunk, chunkCoord, chunkKey, CHUNK_SIZE } = await import('./world-chunk.js');
+  const { TILE_COUNT } = await import('./world-tiles.js');
+  const SEED = 12013, R = 1; // betöltési sugár chunkban
+  const cache = new Map();
+  const P = [{ x: 0, y: 0 }, { x: 40, y: 20 }];
+  for (let f = 0; f < FRAMES; f++) {
+    P[0].x += 7.3; P[0].y -= 2.9;        // az egyik játékos folyamatosan távolodik
+    P[1].x -= 3.1; P[1].y += 5.7;        // a másik az ellenkező irányba
+    for (const p of P) {
+      assert(Number.isFinite(p.x) && Number.isFinite(p.y), `NaN pozíció a ${f}. kockában`);
+      const cx = chunkCoord(p.x / 32), cy = chunkCoord(p.y / 32);
+      for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) {
+        const k = chunkKey(cx + dx, cy + dy);
+        if (!cache.has(k)) cache.set(k, generateChunk(SEED, cx + dx, cy + dy));
+      }
+    }
+  }
+  assert(cache.size > 20, 'kevés chunk töltődött be: ' + cache.size);
+  for (const c of cache.values()) {
+    eq(c.tiles.length, CHUNK_SIZE * CHUNK_SIZE);
+    for (let i = 0; i < c.tiles.length; i += 17) assert(c.tiles[i] < TILE_COUNT, 'érvénytelen tile-id');
+    const again = generateChunk(SEED, c.cx, c.cy);
+    eq(again.tiles.join(), c.tiles.join(), 'újragenerálás eltér: ' + c.cx + ',' + c.cy);
+  }
 });
