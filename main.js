@@ -2,8 +2,9 @@ import { createScreen, VIRTUAL_W, VIRTUAL_H } from './core-screen.js';
 import { Input } from './core-input.js';
 import { VERSION, VERSION_DATE } from './version.js';
 import { initDebug } from './core-debug.js';
-import { createPlayer, stepPlayer } from './game-player.js';
+import { createPlayer } from './game-player.js';
 import { createCamera, stepCamera, cameraOffset } from './game-camera.js';
+import { createTetherSystem, stepTetherSystem } from './tether-system.js';
 
 initDebug();
 
@@ -16,11 +17,12 @@ const input = new Input();
 
 const players = [createPlayer(0, 400, 270), createPlayer(1, 540, 270)];
 const camera = createCamera((players[0].x + players[1].x) / 2, (players[0].y + players[1].y) / 2);
-const game = { time: 0, ticks: 0, fps: 0, players, camera };
+const tether = createTetherSystem();
+const game = { time: 0, ticks: 0, fps: 0, players, camera, tether };
 
 function update(dt) {
   input.update();
-  game.players.forEach((p, i) => stepPlayer(p, input.get(i), dt));
+  stepTetherSystem(tether, game.players, [input.get(0), input.get(1)], dt);
   stepCamera(game.camera, game.players[0], game.players[1], dt);
   game.time += dt;
   game.ticks++;
@@ -74,4 +76,4 @@ function frame(now) {
 }
 requestAnimationFrame(frame);
 
-window.__game = { game, input, screen };
+window.__game = { game, input, screen, tether };
