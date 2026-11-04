@@ -5,12 +5,11 @@ import { initDebug } from './core-debug.js';
 import { createPlayer } from './game-player.js';
 import { createCamera, stepCamera, cameraOffset } from './game-camera.js';
 import { createTetherSystem, stepTetherSystem } from './tether-system.js';
-import { generateWalls, ARENA_TILES } from './game-walls.js';
 import { TetherConfig, bindTetherConfigKeys, tetherHudLines } from './tether-config.js';
 import { createTetherVisual, stepTetherVisual, tetherCurve, tetherStyle } from './tether-visual.js';
-import { mapToWalls } from './world-tilemap.js';
-import { buildArenaMap, arenaKeepFree } from './world-arena.js';
-import { createTileAtlas, drawTiles } from './render-tiles.js';
+import { createTileAtlas } from './render-tiles.js';
+import { WORLD_SEED, createWorldStream, warmStream, updateStream, streamWalls, findOpenSpot } from './world-stream.js';
+import { createChunkRenderer, drawChunks } from './render-chunks.js';
 
 initDebug();
 
@@ -21,22 +20,32 @@ const canvas = document.getElementById('game');
 const screen = createScreen(canvas);
 const input = new Input();
 
-const SPAWN = [[400, 270], [540, 270]];
+// Chunk-világ (S014): a kezdőhely a (0,0) körüli első nyitott terület; a falak a betöltött chunkokból jönnek.
+const spot = findOpenSpot(WORLD_SEED, 0, 0) || { x: 16, y: 16 };
+const SPAWN = [[spot.x - 70, spot.y], [spot.x + 70, spot.y]];
 const players = SPAWN.map(([x, y], i) => createPlayer(i, x, y));
 const camera = createCamera((players[0].x + players[1].x) / 2, (players[0].y + players[1].y) / 2);
-// Tile-világ: a greybox-aréna falaiból + dekorációból tile-térkép; az ütközés a térkép ütköző tile-jaiból jön.
-const tileMap = buildArenaMap(generateWalls(), ARENA_TILES.w, ARENA_TILES.h, { keepFree: arenaKeepFree(SPAWN) });
-const walls = mapToWalls(tileMap);
+const world = createWorldStream(WORLD_SEED);
+warmStream(world, players);
+const walls = streamWalls(world);              // helyben frissítjük (a póráz-rendszer ugyanezt a tömböt olvassa)
+let wallsVersion = world.version;
 const atlas = createTileAtlas();
+const chunkRend = createChunkRenderer(atlas);
 const tc = new TetherConfig();                 // hangolható póráz-értékek (localStorage), billentyűk: 1-9
 const tether = createTetherSystem(tc.systemConfig({ walls }));
 const camCfg = tc.cameraConfig();
 bindTetherConfigKeys(tc);
 const vis = createTetherVisual();              // a fonal megjelenített állapota; vis.on(fn): szint-események (hanghoz)
-const game = { time: 0, ticks: 0, fps: 0, players, camera, tether, walls, tileMap };
+const game = { time: 0, ticks: 0, fps: 0, players, camera, tether, walls, world };
 
 function update(dt) {
   input.update();
+  updateStream(world, game.players);
+  if (world.version !== wallsVersion) { // a betöltött chunkok változtak -> falak újraépítése (ugyanabban a tömbben)
+    wallsVersion = world.version;
+    walls.length = 0;
+    for (const r of streamWalls(world)) walls.push(r);
+  }
   stepTetherSystem(tether, game.players, [input.get(0), input.get(1)], dt);
   stepTetherVisual(vis, tether, dt);
   stepCamera(game.camera, game.players[0], game.players[1], dt, camCfg);
@@ -87,7 +96,7 @@ function render() {
   const o = cameraOffset(game.camera, { w: VIRTUAL_W, h: VIRTUAL_H });
   ctx.fillStyle = '#10141c';
   ctx.fillRect(0, 0, VIRTUAL_W, VIRTUAL_H);
-  drawTiles(ctx, atlas, game.tileMap, o.x, o.y, VIRTUAL_W, VIRTUAL_H);
+  drawChunks(ctx, chunkRend, world, o.x, o.y, VIRTUAL_W, VIRTUAL_H);
   drawTether(ctx, o);
   for (const p of game.players) {
     ctx.fillStyle = p.color;
@@ -96,7 +105,7 @@ function render() {
   ctx.font = '12px monospace';
   ctx.textBaseline = 'top';
   ctx.fillStyle = '#9fb4d0';
-  ctx.fillText(`Interlinked ${VERSION} (${VERSION_DATE})  FPS ${game.fps.toFixed(0)}`, 8, 8);
+  ctx.fillText(`Interlinked ${VERSION} (${VERSION_DATE})  FPS ${game.fps.toFixed(0)}  chunk ${world.chunks.size}/${chunkRend.cache.size}`, 8, 8);
   if (tc.hud) drawTetherHud(ctx, 8, 28);
 }
 
@@ -114,4 +123,4 @@ function frame(now) {
 }
 requestAnimationFrame(frame);
 
-window.__game = { game, input, screen, tether, tc, vis, tileMap, atlas };
+window.__game = { game, input, screen, tether, tc, vis, world, atlas, chunkRend };
