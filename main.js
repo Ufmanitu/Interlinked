@@ -10,6 +10,8 @@ import { createTetherVisual, stepTetherVisual, tetherCurve, tetherStyle } from '
 import { createTileAtlas } from './render-tiles.js';
 import { WORLD_SEED, createWorldStream, warmStream, updateStream, streamWalls, findOpenSpot } from './world-stream.js';
 import { createChunkRenderer, drawChunks } from './render-chunks.js';
+import { createObjectStore, syncObjects, objectColliders, objectCount } from './world-objects.js';
+import { createObjectSprites, drawYSorted } from './render-objects.js';
 
 initDebug();
 
@@ -27,8 +29,21 @@ const players = SPAWN.map(([x, y], i) => createPlayer(i, x, y));
 const camera = createCamera((players[0].x + players[1].x) / 2, (players[0].y + players[1].y) / 2);
 const world = createWorldStream(WORLD_SEED);
 warmStream(world, players);
-const walls = streamWalls(world);              // helyben frissítjük (a póráz-rendszer ugyanezt a tömböt olvassa)
-let wallsVersion = world.version;
+// Objektumok (S015): fa, kő; a kezdőhely körül szabad terület marad; az ütközők a falak közé kerülnek.
+const objects = createObjectStore(WORLD_SEED, { keepFree: [{ x: spot.x, y: spot.y, r: 224 }] });
+syncObjects(objects, world);
+const objSprites = createObjectSprites();
+const walls = [];                              // helyben frissítjük (a póráz-rendszer ugyanezt a tömböt olvassa)
+let wallsKey = '';
+function refreshWalls() {
+  const key = world.version + '|' + objects.version;
+  if (key === wallsKey) return;
+  wallsKey = key;
+  walls.length = 0;
+  for (const r of streamWalls(world)) walls.push(r);
+  for (const r of objectColliders(objects)) walls.push(r);
+}
+refreshWalls();
 const atlas = createTileAtlas();
 const chunkRend = createChunkRenderer(atlas);
 const tc = new TetherConfig();                 // hangolható póráz-értékek (localStorage), billentyűk: 1-9
@@ -36,16 +51,13 @@ const tether = createTetherSystem(tc.systemConfig({ walls }));
 const camCfg = tc.cameraConfig();
 bindTetherConfigKeys(tc);
 const vis = createTetherVisual();              // a fonal megjelenített állapota; vis.on(fn): szint-események (hanghoz)
-const game = { time: 0, ticks: 0, fps: 0, players, camera, tether, walls, world };
+const game = { time: 0, ticks: 0, fps: 0, players, camera, tether, walls, world, objects };
 
 function update(dt) {
   input.update();
   updateStream(world, game.players);
-  if (world.version !== wallsVersion) { // a betöltött chunkok változtak -> falak újraépítése (ugyanabban a tömbben)
-    wallsVersion = world.version;
-    walls.length = 0;
-    for (const r of streamWalls(world)) walls.push(r);
-  }
+  syncObjects(objects, world);
+  refreshWalls(); // a betöltött chunkok/objektumok változtak -> falak újraépítése (ugyanabban a tömbben)
   stepTetherSystem(tether, game.players, [input.get(0), input.get(1)], dt);
   stepTetherVisual(vis, tether, dt);
   stepCamera(game.camera, game.players[0], game.players[1], dt, camCfg);
@@ -91,6 +103,11 @@ function drawTetherHud(ctx, x, y) {
   lines.forEach((l, i) => ctx.fillText(l, x, y + i * lh));
 }
 
+function drawPlayer(ctx, p, ox, oy) {
+  ctx.fillStyle = p.color;
+  ctx.fillRect(Math.round(p.x - p.w / 2) - ox, Math.round(p.y - p.h / 2) - oy, p.w, p.h);
+}
+
 function render() {
   const ctx = screen.ctx;
   const o = cameraOffset(game.camera, { w: VIRTUAL_W, h: VIRTUAL_H });
@@ -98,14 +115,11 @@ function render() {
   ctx.fillRect(0, 0, VIRTUAL_W, VIRTUAL_H);
   drawChunks(ctx, chunkRend, world, o.x, o.y, VIRTUAL_W, VIRTUAL_H);
   drawTether(ctx, o);
-  for (const p of game.players) {
-    ctx.fillStyle = p.color;
-    ctx.fillRect(Math.round(p.x - p.w / 2) - o.x, Math.round(p.y - p.h / 2) - o.y, p.w, p.h);
-  }
+  drawYSorted(ctx, objSprites, objects, game.players, o.x, o.y, VIRTUAL_W, VIRTUAL_H, drawPlayer);
   ctx.font = '12px monospace';
   ctx.textBaseline = 'top';
   ctx.fillStyle = '#9fb4d0';
-  ctx.fillText(`Interlinked ${VERSION} (${VERSION_DATE})  FPS ${game.fps.toFixed(0)}  chunk ${world.chunks.size}/${chunkRend.cache.size}`, 8, 8);
+  ctx.fillText(`Interlinked ${VERSION} (${VERSION_DATE})  FPS ${game.fps.toFixed(0)}  chunk ${world.chunks.size}/${chunkRend.cache.size}  obj ${objectCount(objects)}`, 8, 8);
   if (tc.hud) drawTetherHud(ctx, 8, 28);
 }
 
@@ -123,4 +137,4 @@ function frame(now) {
 }
 requestAnimationFrame(frame);
 
-window.__game = { game, input, screen, tether, tc, vis, world, atlas, chunkRend };
+window.__game = { game, input, screen, tether, tc, vis, world, atlas, chunkRend, objects, objSprites };

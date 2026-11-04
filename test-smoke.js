@@ -7,6 +7,7 @@ const MODULES = [
   './version.js', './core-screen.js', './core-input.js', './core-debug.js',
   './game-player.js', './game-camera.js', './tether-logic.js', './game-collision.js', './game-walls.js', './tether-system.js', './tether-config.js',
   './world-tiles.js', './world-tilemap.js', './world-arena.js', './render-tiles.js', './world-noise.js', './world-chunk.js',
+  './world-stream.js', './render-chunks.js', './world-objects.js', './render-objects.js',
 ];
 const FRAMES = 600;
 const DT = 1 / 60;
@@ -358,4 +359,58 @@ test('smoke: 600 kocka chunk-betöltés két mozgó pozíció körül (nincs kiv
     const again = generateChunk(SEED, c.cx, c.cy);
     eq(again.tiles.join(), c.tiles.join(), 'újragenerálás eltér: ' + c.cx + ',' + c.cy);
   }
+});
+
+// ---- S015: a teljes lánc objektumokkal (streaming -> objektumok -> falak -> póráz), mint a main.js ----
+test('smoke (S015): 600 kocka objektumokkal: ütköző fák/kövek, y-sort, élő szinkron (nincs NaN, nincs fal-átfedés, táv. <= L_eff)', async () => {
+  const { createPlayer } = await import('./game-player.js');
+  const { createTetherSystem, stepTetherSystem } = await import('./tether-system.js');
+  const { collides } = await import('./game-collision.js');
+  const { WORLD_SEED, createWorldStream, warmStream, updateStream, streamWalls, findOpenSpot } = await import('./world-stream.js');
+  const { createObjectStore, syncObjects, objectColliders, visibleObjects, sortByY, footY } = await import('./world-objects.js');
+  const spot = findOpenSpot(WORLD_SEED, 0, 0);
+  const P = [createPlayer(0, spot.x - 70, spot.y), createPlayer(1, spot.x + 70, spot.y)];
+  const ws = createWorldStream(WORLD_SEED);
+  warmStream(ws, P);
+  const os = createObjectStore(WORLD_SEED, { keepFree: [{ x: spot.x, y: spot.y, r: 224 }] });
+  syncObjects(os, ws);
+  const walls = [];
+  let key = '';
+  const refresh = () => {
+    const k = ws.version + '|' + os.version;
+    if (k === key) return false;
+    key = k; walls.length = 0;
+    for (const r of streamWalls(ws)) walls.push(r);
+    for (const r of objectColliders(os)) walls.push(r);
+    return true;
+  };
+  refresh();
+  const L = { x: 400, y: 260 };
+  const sys = createTetherSystem({ walls, L, k: 0.5 });
+  const inp = (f, p) => ({ x: Math.sin(f / (50 + 17 * p)) > -0.2 ? 1 : -1, y: Math.cos(f / (70 + 23 * p)) > 0 ? 1 : -1, interact: false, ability1: false, ability2: false, menu: false });
+  let refreshes = 0, maxVisible = 0;
+  const start = [P[0].x, P[0].y];
+  for (let f = 0; f < FRAMES; f++) {
+    updateStream(ws, P);
+    syncObjects(os, ws);
+    if (refresh()) refreshes++;
+    const prev = Math.abs(P[0].x - P[1].x);
+    stepTetherSystem(sys, P, [inp(f, 0), inp(f, 1)], DT);
+    for (const p of P) {
+      assert(Number.isFinite(p.x) && Number.isFinite(p.y), `NaN pozíció a ${f}. kockában`);
+      assert(!collides(p, walls), `fal-/objektum-átfedés a ${f}. kockában`);
+    }
+    assert(Math.abs(P[0].x - P[1].x) <= Math.max(L.x, prev) + EPS, `táv. > L_eff a ${f}. kockában`);
+    if (f % 20 === 0) {
+      const o = { x: Math.round((P[0].x + P[1].x) / 2 - 480), y: Math.round((P[0].y + P[1].y) / 2 - 270) };
+      const list = visibleObjects(os, o.x, o.y, 960, 540);
+      maxVisible = Math.max(maxVisible, list.length);
+      for (const p of P) list.push(p);
+      sortByY(list);
+      for (let i = 1; i < list.length; i++) assert(footY(list[i - 1]) <= footY(list[i]), 'y-sort sorrend sérült');
+    }
+  }
+  assert(Math.hypot(P[0].x - start[0], P[0].y - start[1]) > 100, 'a játékosok elmozdultak');
+  assert(refreshes >= 1 && maxVisible > 0, 'objektumok láthatók voltak: ' + maxVisible);
+  assert(os.chunks.size === ws.chunks.size && os.chunks.size <= 18, 'a tár a streamet követi, korlátos');
 });
