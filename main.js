@@ -16,6 +16,8 @@ import { createInteractSystem, addObjectSource, addProvider, onInteract, stepInt
 import { drawInteractPrompts } from './render-interact.js';
 import { createWarpSystem, warpProvider, warpColliders, handleWarpEvent, stepWarp, streamPoints, warpWhere } from './world-warp.js';
 import { visibleHouses, drawHouse, drawPockets } from './render-warp.js';
+import { createGameClock, stepClock, clockInfo, bindClockKeys } from './game-clock.js';
+import { createDayNight, stepDayNight, drawDayNight, clockLabel, drawClockLabel } from './render-daynight.js';
 
 initDebug();
 
@@ -46,6 +48,9 @@ onInteract(interact, ev => {
   camera.x = (players[0].x + players[1].x) / 2; // a kamera a pár után ugrik (nincs végigsimítás a zsebig)
   camera.y = (players[0].y + players[1].y) / 2;
 });
+const clock = createGameClock();               // S018: játékidő (nap/fázis, hookok: onClock); PageUp/PageDown/End: sebesség
+bindClockKeys(clock);
+const dn = createDayNight();                   // S018: nap/éjszaka színezés (beltérben halványabb)
 const walls = [];                              // helyben frissítjük (a póráz-rendszer ugyanezt a tömböt olvassa)
 let wallsKey = '';
 function refreshWalls() {
@@ -65,12 +70,14 @@ const tether = createTetherSystem(tc.systemConfig({ walls }));
 const camCfg = tc.cameraConfig();
 bindTetherConfigKeys(tc);
 const vis = createTetherVisual();              // a fonal megjelenített állapota; vis.on(fn): szint-események (hanghoz)
-const game = { time: 0, ticks: 0, fps: 0, players, camera, tether, walls, world, objects, interact, warp };
+const game = { time: 0, ticks: 0, fps: 0, players, camera, tether, walls, world, objects, interact, warp, clock };
 const drawList = [];                           // y-sort lista: játékosok + látható házak
 
 function update(dt) {
   input.update();
   stepWarp(warp, dt);
+  stepClock(clock, dt);
+  stepDayNight(dn, warpWhere(warp, game.players) ? 1 : 0, dt);
   updateStream(world, streamPoints(warp, game.players)); // a zsebben lévő játékos helyett a kinti kilépési pont
   syncObjects(objects, world);
   refreshWalls(); // a betöltött chunkok/objektumok változtak -> falak újraépítése (ugyanabban a tömbben)
@@ -143,11 +150,14 @@ function render() {
   for (const p of game.players) drawList.push(p);
   visibleHouses(warp, o.x, o.y, VIRTUAL_W, VIRTUAL_H, drawList);
   drawYSorted(ctx, objSprites, objects, drawList, o.x, o.y, VIRTUAL_W, VIRTUAL_H, drawEntity);
+  const ci = clockInfo(clock);
+  drawDayNight(ctx, dn, ci.minuteOfDay, VIRTUAL_W, VIRTUAL_H); // a promptok és a HUD a színezés fölé kerülnek
   drawInteractPrompts(ctx, interact, o.x, o.y, VIRTUAL_W, VIRTUAL_H, { debug: tc.hud }); // promptok a tárgyak fölött, zónák a debug HUD-dal
   ctx.font = '12px monospace';
   ctx.textBaseline = 'top';
   ctx.fillStyle = '#9fb4d0';
   ctx.fillText(`Interlinked ${VERSION} (${VERSION_DATE})  FPS ${game.fps.toFixed(0)}  chunk ${world.chunks.size}/${chunkRend.cache.size}  obj ${objectCount(objects)}  int ${interact.total}  warp ${warpWhere(warp, game.players) || '-'}`, 8, 8);
+  drawClockLabel(ctx, clockLabel(ci, 'hu', clock.speed), VIRTUAL_W);
   if (tc.hud) drawTetherHud(ctx, 8, 28);
 }
 
@@ -165,4 +175,4 @@ function frame(now) {
 }
 requestAnimationFrame(frame);
 
-window.__game = { game, input, screen, tether, tc, vis, world, atlas, chunkRend, objects, objSprites, interact, warp };
+window.__game = { game, input, screen, tether, tc, vis, world, atlas, chunkRend, objects, objSprites, interact, warp, clock, dn };
