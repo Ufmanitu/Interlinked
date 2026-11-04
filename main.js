@@ -12,8 +12,10 @@ import { WORLD_SEED, createWorldStream, warmStream, updateStream, streamWalls, f
 import { createChunkRenderer, drawChunks } from './render-chunks.js';
 import { createObjectStore, syncObjects, objectColliders, objectCount } from './world-objects.js';
 import { createObjectSprites, drawYSorted } from './render-objects.js';
-import { createInteractSystem, addObjectSource, stepInteraction } from './game-interact.js';
+import { createInteractSystem, addObjectSource, addProvider, onInteract, stepInteraction } from './game-interact.js';
 import { drawInteractPrompts } from './render-interact.js';
+import { createWarpSystem, warpProvider, warpColliders, handleWarpEvent, stepWarp, streamPoints, warpWhere } from './world-warp.js';
+import { visibleHouses, drawHouse, drawPockets } from './render-warp.js';
 
 initDebug();
 
@@ -37,6 +39,13 @@ syncObjects(objects, world);
 const objSprites = createObjectSprites();
 const interact = createInteractSystem();     // S016: interakciós zóna, célpont, egy gomb; a tárgyak a forrásból jönnek
 addObjectSource(interact, objects);
+const warp = createWarpSystem({ anchor: spot }); // S017: kinti házak + beltér-zsebek (data-warps.js); páros be-/kilépés
+addProvider(interact, warpProvider(warp));
+onInteract(interact, ev => {
+  if (ev.kind !== 'warp' || !handleWarpEvent(warp, players, ev)) return;
+  camera.x = (players[0].x + players[1].x) / 2; // a kamera a pár után ugrik (nincs végigsimítás a zsebig)
+  camera.y = (players[0].y + players[1].y) / 2;
+});
 const walls = [];                              // helyben frissítjük (a póráz-rendszer ugyanezt a tömböt olvassa)
 let wallsKey = '';
 function refreshWalls() {
@@ -46,6 +55,7 @@ function refreshWalls() {
   walls.length = 0;
   for (const r of streamWalls(world)) walls.push(r);
   for (const r of objectColliders(objects)) walls.push(r);
+  warpColliders(warp, walls); // házak, zseb-falak, ütköző bútorok
 }
 refreshWalls();
 const atlas = createTileAtlas();
@@ -55,11 +65,13 @@ const tether = createTetherSystem(tc.systemConfig({ walls }));
 const camCfg = tc.cameraConfig();
 bindTetherConfigKeys(tc);
 const vis = createTetherVisual();              // a fonal megjelenített állapota; vis.on(fn): szint-események (hanghoz)
-const game = { time: 0, ticks: 0, fps: 0, players, camera, tether, walls, world, objects, interact };
+const game = { time: 0, ticks: 0, fps: 0, players, camera, tether, walls, world, objects, interact, warp };
+const drawList = [];                           // y-sort lista: játékosok + látható házak
 
 function update(dt) {
   input.update();
-  updateStream(world, game.players);
+  stepWarp(warp, dt);
+  updateStream(world, streamPoints(warp, game.players)); // a zsebben lévő játékos helyett a kinti kilépési pont
   syncObjects(objects, world);
   refreshWalls(); // a betöltött chunkok/objektumok változtak -> falak újraépítése (ugyanabban a tömbben)
   const inputs = [input.get(0), input.get(1)];
@@ -109,6 +121,11 @@ function drawTetherHud(ctx, x, y) {
   lines.forEach((l, i) => ctx.fillText(l, x, y + i * lh));
 }
 
+function drawEntity(ctx, e, ox, oy) {
+  if (e.warp) drawHouse(ctx, e.warp, ox, oy);
+  else drawPlayer(ctx, e, ox, oy);
+}
+
 function drawPlayer(ctx, p, ox, oy) {
   ctx.fillStyle = p.color;
   ctx.fillRect(Math.round(p.x - p.w / 2) - ox, Math.round(p.y - p.h / 2) - oy, p.w, p.h);
@@ -120,13 +137,17 @@ function render() {
   ctx.fillStyle = '#10141c';
   ctx.fillRect(0, 0, VIRTUAL_W, VIRTUAL_H);
   drawChunks(ctx, chunkRend, world, o.x, o.y, VIRTUAL_W, VIRTUAL_H);
+  drawPockets(ctx, warp, o.x, o.y, VIRTUAL_W, VIRTUAL_H);
   drawTether(ctx, o);
-  drawYSorted(ctx, objSprites, objects, game.players, o.x, o.y, VIRTUAL_W, VIRTUAL_H, drawPlayer);
+  drawList.length = 0;
+  for (const p of game.players) drawList.push(p);
+  visibleHouses(warp, o.x, o.y, VIRTUAL_W, VIRTUAL_H, drawList);
+  drawYSorted(ctx, objSprites, objects, drawList, o.x, o.y, VIRTUAL_W, VIRTUAL_H, drawEntity);
   drawInteractPrompts(ctx, interact, o.x, o.y, VIRTUAL_W, VIRTUAL_H, { debug: tc.hud }); // promptok a tárgyak fölött, zónák a debug HUD-dal
   ctx.font = '12px monospace';
   ctx.textBaseline = 'top';
   ctx.fillStyle = '#9fb4d0';
-  ctx.fillText(`Interlinked ${VERSION} (${VERSION_DATE})  FPS ${game.fps.toFixed(0)}  chunk ${world.chunks.size}/${chunkRend.cache.size}  obj ${objectCount(objects)}  int ${interact.total}`, 8, 8);
+  ctx.fillText(`Interlinked ${VERSION} (${VERSION_DATE})  FPS ${game.fps.toFixed(0)}  chunk ${world.chunks.size}/${chunkRend.cache.size}  obj ${objectCount(objects)}  int ${interact.total}  warp ${warpWhere(warp, game.players) || '-'}`, 8, 8);
   if (tc.hud) drawTetherHud(ctx, 8, 28);
 }
 
@@ -144,4 +165,4 @@ function frame(now) {
 }
 requestAnimationFrame(frame);
 
-window.__game = { game, input, screen, tether, tc, vis, world, atlas, chunkRend, objects, objSprites, interact };
+window.__game = { game, input, screen, tether, tc, vis, world, atlas, chunkRend, objects, objSprites, interact, warp };
