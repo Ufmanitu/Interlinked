@@ -12,6 +12,8 @@ import { WORLD_SEED, createWorldStream, warmStream, updateStream, streamWalls, f
 import { createChunkRenderer, drawChunks } from './render-chunks.js';
 import { createObjectStore, syncObjects, objectColliders, objectCount } from './world-objects.js';
 import { createObjectSprites, drawYSorted } from './render-objects.js';
+import { createInteractSystem, addObjectSource, stepInteraction } from './game-interact.js';
+import { drawInteractPrompts } from './render-interact.js';
 
 initDebug();
 
@@ -33,6 +35,8 @@ warmStream(world, players);
 const objects = createObjectStore(WORLD_SEED, { keepFree: [{ x: spot.x, y: spot.y, r: 224 }] });
 syncObjects(objects, world);
 const objSprites = createObjectSprites();
+const interact = createInteractSystem();     // S016: interakciós zóna, célpont, egy gomb; a tárgyak a forrásból jönnek
+addObjectSource(interact, objects);
 const walls = [];                              // helyben frissítjük (a póráz-rendszer ugyanezt a tömböt olvassa)
 let wallsKey = '';
 function refreshWalls() {
@@ -51,14 +55,16 @@ const tether = createTetherSystem(tc.systemConfig({ walls }));
 const camCfg = tc.cameraConfig();
 bindTetherConfigKeys(tc);
 const vis = createTetherVisual();              // a fonal megjelenített állapota; vis.on(fn): szint-események (hanghoz)
-const game = { time: 0, ticks: 0, fps: 0, players, camera, tether, walls, world, objects };
+const game = { time: 0, ticks: 0, fps: 0, players, camera, tether, walls, world, objects, interact };
 
 function update(dt) {
   input.update();
   updateStream(world, game.players);
   syncObjects(objects, world);
   refreshWalls(); // a betöltött chunkok/objektumok változtak -> falak újraépítése (ugyanabban a tömbben)
-  stepTetherSystem(tether, game.players, [input.get(0), input.get(1)], dt);
+  const inputs = [input.get(0), input.get(1)];
+  stepTetherSystem(tether, game.players, inputs, dt);
+  stepInteraction(interact, game.players, inputs, dt); // a mozgás után: a zóna a végleges pozícióhoz igazodik
   stepTetherVisual(vis, tether, dt);
   stepCamera(game.camera, game.players[0], game.players[1], dt, camCfg);
   game.time += dt;
@@ -116,10 +122,11 @@ function render() {
   drawChunks(ctx, chunkRend, world, o.x, o.y, VIRTUAL_W, VIRTUAL_H);
   drawTether(ctx, o);
   drawYSorted(ctx, objSprites, objects, game.players, o.x, o.y, VIRTUAL_W, VIRTUAL_H, drawPlayer);
+  drawInteractPrompts(ctx, interact, o.x, o.y, VIRTUAL_W, VIRTUAL_H, { debug: tc.hud }); // promptok a tárgyak fölött, zónák a debug HUD-dal
   ctx.font = '12px monospace';
   ctx.textBaseline = 'top';
   ctx.fillStyle = '#9fb4d0';
-  ctx.fillText(`Interlinked ${VERSION} (${VERSION_DATE})  FPS ${game.fps.toFixed(0)}  chunk ${world.chunks.size}/${chunkRend.cache.size}  obj ${objectCount(objects)}`, 8, 8);
+  ctx.fillText(`Interlinked ${VERSION} (${VERSION_DATE})  FPS ${game.fps.toFixed(0)}  chunk ${world.chunks.size}/${chunkRend.cache.size}  obj ${objectCount(objects)}  int ${interact.total}`, 8, 8);
   if (tc.hud) drawTetherHud(ctx, 8, 28);
 }
 
@@ -137,4 +144,4 @@ function frame(now) {
 }
 requestAnimationFrame(frame);
 
-window.__game = { game, input, screen, tether, tc, vis, world, atlas, chunkRend, objects, objSprites };
+window.__game = { game, input, screen, tether, tc, vis, world, atlas, chunkRend, objects, objSprites, interact };
