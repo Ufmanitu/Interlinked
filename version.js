@@ -1,3 +1,2 @@
-// Verzió: lépés-azonosító + dátum (a játék sarkában látszik)
-export const VERSION = 'S018';
-export const VERSION_DATE = '2026-11-04';
+export const VERSION = 'S019';
+export const VERSION_DATE = '2026-11-09';
