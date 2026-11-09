@@ -5,7 +5,8 @@ import { initDebug } from './core-debug.js';
 import { createPlayer } from './game-player.js';
 import { createCamera, stepCamera, cameraOffset } from './game-camera.js';
 import { createTetherSystem, stepTetherSystem } from './tether-system.js';
-import { TetherConfig, bindTetherConfigKeys, tetherHudLines } from './tether-config.js';
+import { TetherConfig, bindTetherConfigKeys, tetherHudLines, HUD_TEXT } from './tether-config.js';
+import { i18n, currentLang, bindLangKeys } from './i18n.js';
 import { createTetherVisual, stepTetherVisual, tetherCurve, tetherStyle } from './tether-visual.js';
 import { createTileAtlas } from './render-tiles.js';
 import { WORLD_SEED, createWorldStream, warmStream, updateStream, streamWalls, findOpenSpot } from './world-stream.js';
@@ -69,6 +70,7 @@ const tc = new TetherConfig();                 // hangolható póráz-értékek 
 const tether = createTetherSystem(tc.systemConfig({ walls }));
 const camCfg = tc.cameraConfig();
 bindTetherConfigKeys(tc);
+bindLangKeys(i18n, window);                    // S019: F8 = nyelvváltás HU/EN (az S107 menü átveszi)
 const vis = createTetherVisual();              // a fonal megjelenített állapota; vis.on(fn): szint-események (hanghoz)
 const game = { time: 0, ticks: 0, fps: 0, players, camera, tether, walls, world, objects, interact, warp, clock };
 const drawList = [];                           // y-sort lista: játékosok + látható házak
@@ -116,7 +118,7 @@ function drawTether(ctx, o) {
 
 // Debug HUD: póráz-értékek (stretch tengelyenként, k, L_eff) és a konfig; a 9-es billentyű ki/be kapcsolja.
 function drawTetherHud(ctx, x, y) {
-  const lines = tetherHudLines(tether, tc);
+  const lines = tetherHudLines(tether, tc, HUD_TEXT[currentLang()] || HUD_TEXT.hu);
   const lh = 14;
   ctx.font = '12px monospace';
   ctx.textBaseline = 'top';
@@ -152,12 +154,12 @@ function render() {
   drawYSorted(ctx, objSprites, objects, drawList, o.x, o.y, VIRTUAL_W, VIRTUAL_H, drawEntity);
   const ci = clockInfo(clock);
   drawDayNight(ctx, dn, ci.minuteOfDay, VIRTUAL_W, VIRTUAL_H); // a promptok és a HUD a színezés fölé kerülnek
-  drawInteractPrompts(ctx, interact, o.x, o.y, VIRTUAL_W, VIRTUAL_H, { debug: tc.hud }); // promptok a tárgyak fölött, zónák a debug HUD-dal
+  drawInteractPrompts(ctx, interact, o.x, o.y, VIRTUAL_W, VIRTUAL_H, { debug: tc.hud, lang: currentLang() }); // promptok a tárgyak fölött, zónák a debug HUD-dal
   ctx.font = '12px monospace';
   ctx.textBaseline = 'top';
   ctx.fillStyle = '#9fb4d0';
   ctx.fillText(`Interlinked ${VERSION} (${VERSION_DATE})  FPS ${game.fps.toFixed(0)}  chunk ${world.chunks.size}/${chunkRend.cache.size}  obj ${objectCount(objects)}  int ${interact.total}  warp ${warpWhere(warp, game.players) || '-'}`, 8, 8);
-  drawClockLabel(ctx, clockLabel(ci, 'hu', clock.speed), VIRTUAL_W);
+  drawClockLabel(ctx, clockLabel(ci, currentLang(), clock.speed), VIRTUAL_W);
   if (tc.hud) drawTetherHud(ctx, 8, 28);
 }
 

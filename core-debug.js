@@ -1,5 +1,5 @@
-// Hibák és teszt-eredmények a képernyőn, másolás gombbal
-const S = { copy: 'Másolás', copied: 'Másolva', errors: 'Hibák' };
+// Hibák és teszt-eredmények a képernyőn, másolás gombbal (S019: a szövegek az i18n-ből, kulcs: ui.copy, ui.copied, debug.errors)
+import { t } from './i18n.js';
 
 const errors = [];
 let box = null, pre = null, btn = null, head = null;
@@ -12,12 +12,12 @@ function ensureBox() {
   head = document.createElement('div');
   head.style.cssText = 'font-weight:bold;margin-bottom:4px;';
   btn = document.createElement('button');
-  btn.textContent = S.copy;
+  btn.textContent = t('ui.copy');
   btn.style.cssText = 'margin-left:8px;font:12px monospace;';
   btn.onclick = async () => {
     await copyText(pre.textContent);
-    btn.textContent = S.copied;
-    setTimeout(() => { btn.textContent = S.copy; }, 1200);
+    btn.textContent = t('ui.copied');
+    setTimeout(() => { btn.textContent = t('ui.copy'); }, 1200);
   };
   head.appendChild(btn);
   pre = document.createElement('pre');
@@ -44,8 +44,8 @@ export function logError(msg) {
   errors.push(String(msg));
   ensureBox();
   if (!box) return;
-  head.firstChild === btn ? head.insertBefore(document.createTextNode(S.errors + ' (' + errors.length + ')'), btn)
-    : (head.firstChild.textContent = S.errors + ' (' + errors.length + ')');
+  head.firstChild === btn ? head.insertBefore(document.createTextNode(t('debug.errors') + ' (' + errors.length + ')'), btn)
+    : (head.firstChild.textContent = t('debug.errors') + ' (' + errors.length + ')');
   pre.textContent = errors.join('\n');
   box.style.display = 'block';
 }
