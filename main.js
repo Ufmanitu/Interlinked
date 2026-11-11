@@ -19,6 +19,8 @@ import { createWarpSystem, warpProvider, warpColliders, handleWarpEvent, stepWar
 import { visibleHouses, drawHouse, drawPockets } from './render-warp.js';
 import { createGameClock, stepClock, clockInfo, bindClockKeys } from './game-clock.js';
 import { createDayNight, stepDayNight, drawDayNight, clockLabel, drawClockLabel } from './render-daynight.js';
+import { createSplitView, stepSplitView, snapSplitView, splitOffsets } from './game-splitview.js';
+import { createSplitRenderer, beginView, composeSplit } from './render-split.js';
 
 initDebug();
 
@@ -34,6 +36,11 @@ const spot = findOpenSpot(WORLD_SEED, 0, 0) || { x: 16, y: 16 };
 const SPAWN = [[spot.x - 70, spot.y], [spot.x + 70, spot.y]];
 const players = SPAWN.map(([x, y], i) => createPlayer(i, x, y));
 const camera = createCamera((players[0].x + players[1].x) / 2, (players[0].y + players[1].y) / 2);
+// Két nézet (S023): két kamera (mindkettő a saját játékosán), két offscreen canvas, fix függőleges osztás.
+// A közös (felezőpont) kamera megmarad az S025 összeolvadásához; a rajz most mindig az osztott nézet.
+const split = createSplitView(players);
+const splitRend = createSplitRenderer(split.layout);
+const offs = [{ x: 0, y: 0 }, { x: 0, y: 0 }];
 const world = createWorldStream(WORLD_SEED);
 warmStream(world, players);
 // Objektumok (S015): fa, kő; a kezdőhely körül szabad terület marad; az ütközők a falak közé kerülnek.
@@ -48,6 +55,7 @@ onInteract(interact, ev => {
   if (ev.kind !== 'warp' || !handleWarpEvent(warp, players, ev)) return;
   camera.x = (players[0].x + players[1].x) / 2; // a kamera a pár után ugrik (nincs végigsimítás a zsebig)
   camera.y = (players[0].y + players[1].y) / 2;
+  snapSplitView(split, players); // a két nézet is a párhoz ugrik
 });
 const clock = createGameClock();               // S018: játékidő (nap/fázis, hookok: onClock); PageUp/PageDown/End: sebesség
 bindClockKeys(clock);
@@ -65,14 +73,14 @@ function refreshWalls() {
 }
 refreshWalls();
 const atlas = createTileAtlas();
-const chunkRend = createChunkRenderer(atlas);
+const chunkRend = createChunkRenderer(atlas, { maxCanvases: 8 }); // két nézet: legfeljebb 2x4 chunk
 const tc = new TetherConfig();                 // hangolható póráz-értékek (localStorage), billentyűk: 1-9
 const tether = createTetherSystem(tc.systemConfig({ walls }));
 const camCfg = tc.cameraConfig();
 bindTetherConfigKeys(tc);
 bindLangKeys(i18n, window);                    // S019: F8 = nyelvváltás HU/EN (az S107 menü átveszi)
 const vis = createTetherVisual();              // a fonal megjelenített állapota; vis.on(fn): szint-események (hanghoz)
-const game = { time: 0, ticks: 0, fps: 0, players, camera, tether, walls, world, objects, interact, warp, clock };
+const game = { time: 0, ticks: 0, fps: 0, players, camera, split, tether, walls, world, objects, interact, warp, clock };
 const drawList = [];                           // y-sort lista: játékosok + látható házak
 
 function update(dt) {
@@ -88,6 +96,7 @@ function update(dt) {
   stepInteraction(interact, game.players, inputs, dt); // a mozgás után: a zóna a végleges pozícióhoz igazodik
   stepTetherVisual(vis, tether, dt);
   stepCamera(game.camera, game.players[0], game.players[1], dt, camCfg);
+  stepSplitView(split, game.players, dt, camCfg);
   game.time += dt;
   game.ticks++;
 }
@@ -140,21 +149,28 @@ function drawPlayer(ctx, p, ox, oy) {
   ctx.fillRect(Math.round(p.x - p.w / 2) - ox, Math.round(p.y - p.h / 2) - oy, p.w, p.h);
 }
 
-function render() {
-  const ctx = screen.ctx;
-  const o = cameraOffset(game.camera, { w: VIRTUAL_W, h: VIRTUAL_H });
-  ctx.fillStyle = '#10141c';
-  ctx.fillRect(0, 0, VIRTUAL_W, VIRTUAL_H);
-  drawChunks(ctx, chunkRend, world, o.x, o.y, VIRTUAL_W, VIRTUAL_H);
-  drawPockets(ctx, warp, o.x, o.y, VIRTUAL_W, VIRTUAL_H);
+// Egy nézet rajza a saját offscreen ctx-re (0,0 = a nézet bal-felső sarka; o = az adott kamera offsetje).
+function renderView(ctx, o, vw, vh, ci) {
+  drawChunks(ctx, chunkRend, world, o.x, o.y, vw, vh);
+  drawPockets(ctx, warp, o.x, o.y, vw, vh);
   drawTether(ctx, o);
   drawList.length = 0;
   for (const p of game.players) drawList.push(p);
-  visibleHouses(warp, o.x, o.y, VIRTUAL_W, VIRTUAL_H, drawList);
-  drawYSorted(ctx, objSprites, objects, drawList, o.x, o.y, VIRTUAL_W, VIRTUAL_H, drawEntity);
+  visibleHouses(warp, o.x, o.y, vw, vh, drawList);
+  drawYSorted(ctx, objSprites, objects, drawList, o.x, o.y, vw, vh, drawEntity);
+  drawDayNight(ctx, dn, ci.minuteOfDay, vw, vh); // a promptok a színezés fölé kerülnek
+  drawInteractPrompts(ctx, interact, o.x, o.y, vw, vh, { debug: tc.hud, lang: currentLang() }); // promptok a tárgyak fölött, zónák a debug HUD-dal
+}
+
+function render() {
+  const ctx = screen.ctx;
   const ci = clockInfo(clock);
-  drawDayNight(ctx, dn, ci.minuteOfDay, VIRTUAL_W, VIRTUAL_H); // a promptok és a HUD a színezés fölé kerülnek
-  drawInteractPrompts(ctx, interact, o.x, o.y, VIRTUAL_W, VIRTUAL_H, { debug: tc.hud, lang: currentLang() }); // promptok a tárgyak fölött, zónák a debug HUD-dal
+  splitOffsets(split, offs);
+  for (let i = 0; i < 2; i++) {
+    const v = split.layout.views[i];
+    renderView(beginView(splitRend, i), offs[i], v.w, v.h, ci);
+  }
+  composeSplit(ctx, splitRend); // a két nézet + osztóvonal a fő vászonra; a HUD/számláló fölé kerül
   ctx.font = '12px monospace';
   ctx.textBaseline = 'top';
   ctx.fillStyle = '#9fb4d0';
@@ -177,4 +193,4 @@ function frame(now) {
 }
 requestAnimationFrame(frame);
 
-window.__game = { game, input, screen, tether, tc, vis, world, atlas, chunkRend, objects, objSprites, interact, warp, clock, dn };
+window.__game = { game, split, splitRend, input, screen, tether, tc, vis, world, atlas, chunkRend, objects, objSprites, interact, warp, clock, dn };
