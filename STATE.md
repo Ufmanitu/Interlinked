@@ -1,7 +1,7 @@
 # STATE
 
-Utolsó kész lépés: S021
-Verzió: S021 · 2026-11-09
+Utolsó kész lépés: S022
+Verzió: S022 · 2026-11-11
 
 ## Fájl-index (API)
 - index.html: canvas#game 960x540, modul: main.js
@@ -50,6 +50,7 @@ Verzió: S021 · 2026-11-09
 - data-sprites.js (S021; adat): SPRITE_DEFS {'icon.shard' 16x16 (variánsok: frost, ember), 'icon.coin' 10x10 (variáns: silver)} (kódból rajzolt kezdő-sprite-ok; új sprite: lásd Szabályok)
 - test-sprite.js (S021, a FILES-ben): 15 teszt (szín, compile ok/hibás/fuzz, swapPalette, mirror, placeholder, nyilvántartás, getSpriteData, SPRITE_DEFS, paintIndexed pixelpontosan, paintTile-kompatibilitás, cache/LRU, drawSprite, smoke 600 kocka); helper: rasterCanvas(w,h) (a fillRect-et pixel-rácsba rögzítő hamis canvas)
 - ATTRIBUTIONS.md (S021): licenc-nyilvántartás sablon (jelenleg nincs külső asset); új külső asset felvétele ELŐTT ide kell írni
+- test-m1.js (S022, a FILES-ben): az M1 playteszt automata megfelelője, 6 teszt: chunk-átmenet (játékos chunkja azonnal betöltött, készlet <= 40), terep-varrat/determinizmus, objektum-ütközők nem lógnak át chunk-határon, Y-sort (játékos+objektum), warp be-/kilépés (az interakció-rendszeren át keresi a pontot, páros, nincs zseb-chunk), 600 kockás main-szerű lánc (logika < 12 ms/kocka, chunk <= 30, nincs NaN). NEM FUTTATVA (a többi repó-fájl nem volt elérhető); a STATE API-ja alapján átnézve. Feltevések: createPlayer középpontos (p.w/p.h hiányában PLAYER_SIZE), stepInteraction a lépés eseményeit adja (kind 'warp', player), resolveLink(...).bounds = {x,y,w,h}, ws/os.chunks Map. Ha bukik: HIBA-sor a fájlnévvel.
 - test-collision.js: söprés, csúszás, constrainPair, rendszer-szintű "húzott fal -> húzó megáll", fuzz az arénában (nincs átfedés/NaN, táv. <= max(L, előző))
 - test-camera.js: kamera-tesztek (a FILES listában)
 - test-player.js: játékos- és póráz-rendszer tesztek (a FILES listában; helper move(p,inp,dt) póráz nélkül); S010: k-hook (erő, súly+teher, terep, képlet, hibás mezők), húzás-stamina (költség, kimerülés, hiszterézis, kapcsoló), fuzz; helperek: atLimit(cfg,mutA,mutB), run(sys,ps,inp,n), PULL_A/PULL_B/STILL
@@ -59,7 +60,7 @@ Verzió: S021 · 2026-11-09
 - tether-visual.js (S009; tiszta logika): VISUAL_CONFIG {segments 24, maxSag 60, sagDist 160, smooth 14, up/down küszöbök (taut .7/.6, critical .98/.92), widths 2/3/4, colors}, LEVELS, tetherTension(sys) -> 0..1 (max stretch, nem 'free' mód -> 1, NaN->0), nextLevel(prev,s,cfg) (hiszterézis), tetherCurve(a,b,s,cfg) -> [{x,y}] (parabola, s=1 egyenes), tetherStyle(s,level,cfg) -> {level,color 'rgb(..)',width}, createTetherVisual() -> {s,level,on(fn)->leiratkozó,emit}, stepTetherVisual(vis,sys,dt) -> események [{type:'level',from,to,s}] (simított s; a hanghoz: vis.on)
 - test-tether-visual.js: S009 tesztek (tension, görbe, stílus, hiszterézis, eseménylánc, 600 kockás integráció a póráz-rendszerrel; FILES-ben)
 - test-feel.js (S011, a FILES-ben): a M0 playteszt-checklist automata megfelelője, 8 teszt (szabad mozgás, húzás ~k·sebesség + a társ viszi, holtpont, feloldás, követés büntetés nélkül, húzás-stamina 3-8 mp kimerülés / <2,5 mp felépülés, fuzz: táv. <= L_eff + nincs NaN, játékosok a képben húzás/holtpont közben); helperek: setup, run, atLimit
-- test-index.js (FILES: player, camera, tether, tether-visual, collision, feel, smoke, tiles, world, objects, interact, interact-render, warp, clock, i18n, macro, sprite): test(name,fn), assert, eq, near, runAll(), formatResults(); FILES lista a test-*.js fájloknak; Node: `node test-index.js`
+- test-index.js (FILES: player, camera, tether, tether-visual, collision, feel, smoke, tiles, world, objects, interact, interact-render, warp, clock, i18n, macro, sprite, m1): test(name,fn), assert, eq, near, runAll(), formatResults(); FILES lista a test-*.js fájloknak; Node: `node test-index.js`
 - tests.html: futtatja a teszteket, eredmény a képernyőn + Másolás gomb
 
 ## Kiosztás
