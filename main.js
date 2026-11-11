@@ -24,6 +24,8 @@ import { createSplitRenderer, beginView, composeSplit } from './render-split.js'
 import { sanitizeField, fieldL, fieldValue, fieldShare } from './game-field.js';
 import { SORSKO_CONFIG, createSorsko, stepSorsko, sorskoCollider, ringStrength, ringAlpha } from './game-sorsko.js';
 import { createSorskoSprites, visibleSorsko, drawSorsko, drawSorskoRing } from './render-sorsko.js';
+import { createMenus, stepMenus, missingViewChunks } from './game-hud.js';
+import { drawHud } from './render-hud.js';
 
 initDebug();
 
@@ -60,6 +62,7 @@ onInteract(interact, ev => {
   camera.y = (players[0].y + players[1].y) / 2;
   snapSplitView(split, players, tc.lNormal()); // a két nézet is a párhoz ugrik (és az összeolvadás állapota újraszámolódik)
 });
+const menus = createMenus();                   // S029: játékosonkénti real-time menü váz (a karakter áll, a pórázon húzható)
 const clock = createGameClock();               // S018: játékidő (nap/fázis, hookok: onClock); PageUp/PageDown/End: sebesség
 bindClockKeys(clock);
 const dn = createDayNight();                   // S018: nap/éjszaka színezés (beltérben halványabb)
@@ -93,7 +96,7 @@ bindTetherConfigKeys(tc);
 snapSplitView(split, players, tc.lNormal()); // induláskor az összeolvadás állapota a játékosok távolságából
 bindLangKeys(i18n, window);                    // S019: F8 = nyelvváltás HU/EN (az S107 menü átveszi)
 const vis = createTetherVisual();              // a fonal megjelenített állapota; vis.on(fn): szint-események (hanghoz)
-const game = { time: 0, ticks: 0, fps: 0, players, camera, split, tether, walls, world, objects, interact, warp, clock, field, sorsko };
+const game = { time: 0, ticks: 0, fps: 0, players, camera, split, tether, walls, world, objects, interact, warp, clock, field, sorsko, menus };
 const drawList = [];                           // y-sort lista: játékosok + látható házak
 
 function update(dt) {
@@ -105,7 +108,7 @@ function update(dt) {
   updateStream(world, streamPoints(warp, game.players)); // a zsebben lévő játékos helyett a kinti kilépési pont
   syncObjects(objects, world);
   refreshWalls(); // a betöltött chunkok/objektumok változtak -> falak újraépítése (ugyanabban a tömbben)
-  const inputs = [input.get(0), input.get(1)];
+  const inputs = stepMenus(menus, [input.get(0), input.get(1)]); // nyitott menünél a karakter áll (nincs mozgás/interakció), de a pórázon húzható
   stepTetherSystem(tether, game.players, inputs, dt);
   stepInteraction(interact, game.players, inputs, dt); // a mozgás után: a zóna a végleges pozícióhoz igazodik
   stepTetherVisual(vis, tether, dt);
@@ -194,8 +197,9 @@ function render() {
   ctx.font = '12px monospace';
   ctx.textBaseline = 'top';
   ctx.fillStyle = '#9fb4d0';
-  ctx.fillText(`Interlinked ${VERSION} (${VERSION_DATE})  FPS ${game.fps.toFixed(0)}  chunk ${world.chunks.size}/${chunkRend.cache.size}  obj ${objectCount(objects)}  int ${interact.total}  warp ${warpWhere(warp, game.players) || '-'}  mrg ${mergeBlend(split).toFixed(2)}`, 8, 8);
+  ctx.fillText(`Interlinked ${VERSION} (${VERSION_DATE})  FPS ${game.fps.toFixed(0)}  chunk ${world.chunks.size}/${chunkRend.cache.size}  obj ${objectCount(objects)}  int ${interact.total}  warp ${warpWhere(warp, game.players) || '-'}  mrg ${mergeBlend(split).toFixed(2)}  vch ${warpWhere(warp, game.players) ? 0 : missingViewChunks(world, offs, split.layout)}`, 8, 8);
   drawClockLabel(ctx, clockLabel(ci, currentLang(), clock.speed), VIRTUAL_W);
+  drawHud(ctx, game.players, menus, VIRTUAL_W, VIRTUAL_H); // S029: játékosonkénti HUD az alsó sarkokban (a nézetek és a színezés fölött)
   if (tc.hud) drawTetherHud(ctx, 8, 28);
 }
 
@@ -213,4 +217,4 @@ function frame(now) {
 }
 requestAnimationFrame(frame);
 
-window.__game = { game, split, splitRend, input, screen, tether, tc, vis, world, atlas, chunkRend, objects, objSprites, interact, warp, clock, dn, field, sorsko };
+window.__game = { game, split, splitRend, input, screen, tether, tc, vis, world, atlas, chunkRend, objects, objSprites, interact, warp, clock, dn, field, sorsko, menus };
