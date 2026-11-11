@@ -10,7 +10,7 @@ const MODULES = [
   './world-stream.js', './render-chunks.js', './world-objects.js', './render-objects.js',
   './game-interact.js', './render-interact.js', './data-warps.js', './world-warp.js', './render-warp.js', './game-clock.js', './render-daynight.js',
   './i18n.js', './data-text.js', './data-macro.js', './world-macro.js', './world-sprite.js', './render-sprite.js', './data-sprites.js',
-  './game-splitview.js', './render-split.js',
+  './game-splitview.js', './render-split.js', './game-field.js',
 ];
 const FRAMES = 600;
 const DT = 1 / 60;

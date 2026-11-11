@@ -1,7 +1,7 @@
 // Minimális tesztfutó (böngésző és Node). A test-*.js fájlok a FILES listában vannak.
 import { computeScale, VIRTUAL_W, VIRTUAL_H } from './core-screen.js';
 
-const FILES = ['./test-player.js', './test-camera.js', './test-tether.js', './test-tether-visual.js', './test-collision.js', './test-feel.js', './test-smoke.js', './test-tiles.js', './test-world.js', './test-objects.js', './test-interact.js', './test-interact-render.js', './test-warp.js', './test-clock.js', './test-i18n.js', './test-macro.js', './test-sprite.js', './test-m1.js', './test-split.js']; // további test-*.js fájlok ide
+const FILES = ['./test-player.js', './test-camera.js', './test-tether.js', './test-tether-visual.js', './test-collision.js', './test-feel.js', './test-smoke.js', './test-tiles.js', './test-world.js', './test-objects.js', './test-interact.js', './test-interact-render.js', './test-warp.js', './test-clock.js', './test-i18n.js', './test-macro.js', './test-sprite.js', './test-m1.js', './test-split.js', './test-field.js', './test-field-tether.js']; // további test-*.js fájlok ide
 const tests = [];
 
 export function test(name, fn) { tests.push({ name, fn }); }

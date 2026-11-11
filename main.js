@@ -21,11 +21,13 @@ import { createGameClock, stepClock, clockInfo, bindClockKeys } from './game-clo
 import { createDayNight, stepDayNight, drawDayNight, clockLabel, drawClockLabel } from './render-daynight.js';
 import { createSplitView, stepSplitView, snapSplitView, splitOffsets, mergeBlend } from './game-splitview.js';
 import { createSplitRenderer, beginView, composeSplit } from './render-split.js';
+import { sanitizeField, fieldL, fieldValue, fieldShare } from './game-field.js';
 
 initDebug();
 
 export const STEP = 1 / 60; // fix 60 Hz logikai lépés
 const MAX_FRAME = 0.25;     // spirál-védelem
+const VILLAGE_RADIUS = 640; // S027: a falu (Sorskő-mező) sugara px-ben: átmérő 1280 > L_normal; az S028/S097 hangolja
 
 const canvas = document.getElementById('game');
 const screen = createScreen(canvas);
@@ -75,13 +77,17 @@ refreshWalls();
 const atlas = createTileAtlas();
 const chunkRend = createChunkRenderer(atlas, { maxCanvases: 8 }); // két nézet: legfeljebb 2x4 chunk
 const tc = new TetherConfig();                 // hangolható póráz-értékek (localStorage), billentyűk: 1-9
-const tether = createTetherSystem(tc.systemConfig({ walls }));
+// S027: a Sorskő mezője a pórázban: L_eff = lerp(L_normal, L_falu, min(f(A), f(B))); a split-view továbbra is L_normal-t kap.
+const field = sanitizeField({ id: 'sorsko', x: spot.x, y: spot.y, radius: VILLAGE_RADIUS });
+const sysCfg = tc.systemConfig({ walls, field });
+sysCfg.L = fieldL(field, () => tc.lNormal());
+const tether = createTetherSystem(sysCfg);
 const camCfg = tc.cameraConfig();
 bindTetherConfigKeys(tc);
 snapSplitView(split, players, tc.lNormal()); // induláskor az összeolvadás állapota a játékosok távolságából
 bindLangKeys(i18n, window);                    // S019: F8 = nyelvváltás HU/EN (az S107 menü átveszi)
 const vis = createTetherVisual();              // a fonal megjelenített állapota; vis.on(fn): szint-események (hanghoz)
-const game = { time: 0, ticks: 0, fps: 0, players, camera, split, tether, walls, world, objects, interact, warp, clock };
+const game = { time: 0, ticks: 0, fps: 0, players, camera, split, tether, walls, world, objects, interact, warp, clock, field };
 const drawList = [];                           // y-sort lista: játékosok + látható házak
 
 function update(dt) {
@@ -129,6 +135,8 @@ function drawTether(ctx, o) {
 // Debug HUD: póráz-értékek (stretch tengelyenként, k, L_eff) és a konfig; a 9-es billentyű ki/be kapcsolja.
 function drawTetherHud(ctx, x, y) {
   const lines = tetherHudLines(tether, tc, HUD_TEXT[currentLang()] || HUD_TEXT.hu);
+  const [pa, pb] = game.players; // S027: mező-érték játékosonként és a közös s = min(f(A), f(B))
+  lines.splice(lines.length - 1, 0, `field    f(a) ${fieldValue(field, pa).toFixed(2)}  f(b) ${fieldValue(field, pb).toFixed(2)}  s ${fieldShare(field, pa, pb).toFixed(2)}`);
   const lh = 14;
   ctx.font = '12px monospace';
   ctx.textBaseline = 'top';
@@ -194,4 +202,4 @@ function frame(now) {
 }
 requestAnimationFrame(frame);
 
-window.__game = { game, split, splitRend, input, screen, tether, tc, vis, world, atlas, chunkRend, objects, objSprites, interact, warp, clock, dn };
+window.__game = { game, split, splitRend, input, screen, tether, tc, vis, world, atlas, chunkRend, objects, objSprites, interact, warp, clock, dn, field };
