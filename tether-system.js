@@ -4,7 +4,7 @@
 import { CAM_VIEW, CAM_CONFIG } from './game-camera.js';
 import { computeTether } from './tether-logic.js';
 import { desiredVelocity, applyVelocity } from './game-player.js';
-import { moveWithWalls } from './game-collision.js';
+import { moveWithWalls, sweepAxis } from './game-collision.js';
 
 // k-hook tényezők (placeholder, az S011 playteszt hangolja). Egységek: 1 = átlagos erő / átlagos test.
 // strengthRef: a referencia-erő; weightRef: a referencia-súly (test + teher); weightMin/Max: a súly-szorzó határai;
@@ -13,6 +13,11 @@ export const K_HOOK = Object.freeze({ strengthRef: 1, weightRef: 1, weightMin: 0
 // Húzás-stamina (placeholder; az S048 általános staminája bővíti). cost/regen: egység/mp, resume: a max törtrésze,
 // ami fölött a kimerült állapot megszűnik (hiszterézis).
 export const PULL_STAMINA = Object.freeze({ max: 100, cost: 20, regen: 15, resume: 0.2 });
+
+// S030: visszahúzás. Ha az L_eff összehúzódik (a falu határsávjában/azon kívül), és a táv tengelyenként nagyobb nála, a póráz
+// játékosonként legfeljebb speed px/s-mal összehúzza a párt (a falakat tiszteletben tartva): falun kívül a pár egy képbe fér.
+// speed 0 -> ki. minExcess: ennél kisebb túllógást (lebegőpontos zaj) nem korrigál.
+export const REEL_CONFIG = Object.freeze({ speed: 90, minExcess: 0.5 });
 
 // L: szám | {x,y} | függvény(players) -> szám|{x,y} (az S027-től a FieldSystem adja az L_eff-et).
 // k: szám | {a,b} | függvény(players) -> szám|{a,b}: a BÁZIS k (TetherConfig.k); a k-hook ezt szorozza.
@@ -28,6 +33,7 @@ export const TETHER_CONFIG = {
   pullStamina: false,
   khook: K_HOOK,
   stamina: PULL_STAMINA,
+  reel: REEL_CONFIG,
 };
 
 const num = (v, d) => (Number.isFinite(v) ? v : d);
@@ -108,6 +114,26 @@ export function resolveL(cfg, players) {
 
 // Egy lépés: a két játékos mozgatása a póráz szabályai szerint.
 // inputs: [P1 input, P2 input] ({x,y} -1..1). Visszatér a computeTether eredményével.
+/** S030: az L_eff alá szorítja a tengelyenkénti távot (csak ha túllóg), játékosonként legfeljebb reel.speed·dt-vel; -> a mozgatott pixelek összege. */
+export function reelIn(pa, pb, L, dt, walls, reel = REEL_CONFIG) {
+  const sp = reel && Number.isFinite(reel.speed) ? reel.speed : 0;
+  if (!(sp > 0) || !(dt > 0) || !Number.isFinite(pa.x + pa.y + pb.x + pb.y)) return 0;
+  const lim = typeof L === 'number' ? { x: L, y: L } : L;
+  if (!lim || !(lim.x > 0) || !(lim.y > 0)) return 0;
+  const minEx = reel && Number.isFinite(reel.minExcess) ? reel.minExcess : 0.5;
+  let moved = 0;
+  for (const ax of ['x', 'y']) {
+    const d = pb[ax] - pa[ax], excess = Math.abs(d) - lim[ax];
+    if (!(excess > minEx)) continue;
+    const step = Math.min(excess / 2, sp * dt), s = Math.sign(d);
+    for (const [p, dir] of [[pa, s], [pb, -s]]) {
+      const m = walls && walls.length ? sweepAxis(p, ax, dir * step, walls) : dir * step;
+      p[ax] += m; moved += Math.abs(m);
+    }
+  }
+  return moved;
+}
+
 export function stepTetherSystem(sys, players, inputs, dt) {
   const [pa, pb] = players;
   const L = resolveL(sys.cfg, players);
@@ -128,6 +154,7 @@ export function stepTetherSystem(sys, players, inputs, dt) {
     applyVelocity(pb, t.b.x, t.b.y, dt);
     sys.blocked = { a: { x: false, y: false }, b: { x: false, y: false } };
   }
+  reelIn(pa, pb, L, dt, walls, sys.cfg.reel);
   stepPullStamina(players, t.mode, dt, staminaOn, sys.cfg.stamina);
   sys.L = L;
   sys.k = k;

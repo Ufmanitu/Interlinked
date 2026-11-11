@@ -46,11 +46,13 @@ export function mergeRatio(a, b, L) {
   return Math.max(Math.abs(a.x - b.x) / l.x, Math.abs(a.y - b.y) / l.y);
 }
 
-/** Hiszterézis: az új "összeolvadt" állapot (on). Hibás r -> az állapot marad. */
-export function mergeDecide(on, r, cfg = SPLIT_CONFIG) {
+/** Hiszterézis: az új "összeolvadt" állapot (on). Hibás r -> az állapot marad.
+ *  tight (S030): falun kívül (L_eff = L_normal) a póráz r <= 1-en tart, ott nincs mit hiszterézissel védeni -> az összeolvadás már r <= splitAt-nál is megtörténik
+ *  (a visszahúzott pár nem ragad szétválva 0,85 és 1,0 között). */
+export function mergeDecide(on, r, cfg = SPLIT_CONFIG, tight = false) {
   if (!Number.isFinite(r)) return on;
   if (on) return !(r > cfg.splitAt + cfg.eps);
-  return r <= cfg.mergeAt;
+  return r <= (tight ? cfg.splitAt : cfg.mergeAt);
 }
 
 function easeIn(s) { const t = clamp01(s); return t * t * (3 - 2 * t); } // smoothstep
@@ -100,8 +102,8 @@ function swapOrder(sv, players, order) {
   }
 }
 
-/** Egy lépés: nézetenként a saját játékos követése, a közös (felezőpont) kamera, az összeolvadás állapota és átmenete. L: L_normal (szám|{x,y}|függvény); nélküle nincs összeolvadás. */
-export function stepSplitView(sv, players, dt, camCfg, L) {
+/** Egy lépés: nézetenként a saját játékos követése, a közös (felezőpont) kamera, az összeolvadás állapota és átmenete. L: L_normal (szám|{x,y}|függvény); nélküle nincs összeolvadás. tight: falun kívül (S030, lásd mergeDecide). */
+export function stepSplitView(sv, players, dt, camCfg, L, tight = false) {
   const a = pos(players && players[0]), b = pos(players && players[1]);
   for (let i = 0; i < 2; i++) {
     const p = pos(players && players[viewOwner(sv, i)]);
@@ -112,7 +114,7 @@ export function stepSplitView(sv, players, dt, camCfg, L) {
   if (a && b) stepCamera(sv.common, a, b, dt, camCfg, { w: sv.layout.w, h: sv.layout.h });
   const l = normalL(L, players);
   const m = sv.merge;
-  m.on = l ? mergeDecide(m.on, mergeRatio(a, b, l), sv.cfg) : false;
+  m.on = l ? mergeDecide(m.on, mergeRatio(a, b, l), sv.cfg, !!tight) : false;
   if (dt > 0 && Number.isFinite(dt)) {
     const rate = dt / Math.max(1e-3, sv.cfg.time);
     m.s = clamp01(m.s + (m.on ? rate : -rate));

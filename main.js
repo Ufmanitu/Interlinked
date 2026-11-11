@@ -113,7 +113,7 @@ function update(dt) {
   stepInteraction(interact, game.players, inputs, dt); // a mozgás után: a zóna a végleges pozícióhoz igazodik
   stepTetherVisual(vis, tether, dt);
   stepCamera(game.camera, game.players[0], game.players[1], dt, camCfg);
-  stepSplitView(split, game.players, dt, camCfg, tc.lNormal()); // L_normal: az összeolvadás küszöbei ehhez mérve
+  stepSplitView(split, game.players, dt, camCfg, tc.lNormal(), fieldShare(field, game.players[0], game.players[1]) <= 0); // L_normal: az összeolvadás küszöbei ehhez mérve; falun kívül (tight) r <= 1-nél már összeolvad (S030)
   game.time += dt;
   game.ticks++;
 }
