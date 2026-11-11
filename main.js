@@ -22,12 +22,13 @@ import { createDayNight, stepDayNight, drawDayNight, clockLabel, drawClockLabel 
 import { createSplitView, stepSplitView, snapSplitView, splitOffsets, mergeBlend } from './game-splitview.js';
 import { createSplitRenderer, beginView, composeSplit } from './render-split.js';
 import { sanitizeField, fieldL, fieldValue, fieldShare } from './game-field.js';
+import { SORSKO_CONFIG, createSorsko, stepSorsko, sorskoCollider, ringStrength, ringAlpha } from './game-sorsko.js';
+import { createSorskoSprites, visibleSorsko, drawSorsko, drawSorskoRing } from './render-sorsko.js';
 
 initDebug();
 
 export const STEP = 1 / 60; // fix 60 Hz logikai lépés
 const MAX_FRAME = 0.25;     // spirál-védelem
-const VILLAGE_RADIUS = 640; // S027: a falu (Sorskő-mező) sugara px-ben: átmérő 1280 > L_normal; az S028/S097 hangolja
 
 const canvas = document.getElementById('game');
 const screen = createScreen(canvas);
@@ -62,6 +63,11 @@ onInteract(interact, ev => {
 const clock = createGameClock();               // S018: játékidő (nap/fázis, hookok: onClock); PageUp/PageDown/End: sebesség
 bindClockKeys(clock);
 const dn = createDayNight();                   // S018: nap/éjszaka színezés (beltérben halványabb)
+// S027/S028: a Sorskő mezője a pórázban (L_eff = lerp(L_normal, L_falu, min(f(A), f(B)))); a sugarat a Sorskő szintje adja (SORSKO_CONFIG.levels)
+const field = sanitizeField({ id: 'sorsko', x: spot.x, y: spot.y, radius: SORSKO_CONFIG.levels[0] });
+const sorsko = createSorsko(field);
+const sorskoSprites = createSorskoSprites();
+let ringA = 0;                                   // a határ-gyűrű alfája (képkockánként számolva)
 const walls = [];                              // helyben frissítjük (a póráz-rendszer ugyanezt a tömböt olvassa)
 let wallsKey = '';
 function refreshWalls() {
@@ -72,13 +78,13 @@ function refreshWalls() {
   for (const r of streamWalls(world)) walls.push(r);
   for (const r of objectColliders(objects)) walls.push(r);
   warpColliders(warp, walls); // házak, zseb-falak, ütköző bútorok
+  walls.push(sorskoCollider(sorsko)); // a Sorskő talpa
 }
 refreshWalls();
 const atlas = createTileAtlas();
 const chunkRend = createChunkRenderer(atlas, { maxCanvases: 8 }); // két nézet: legfeljebb 2x4 chunk
 const tc = new TetherConfig();                 // hangolható póráz-értékek (localStorage), billentyűk: 1-9
-// S027: a Sorskő mezője a pórázban: L_eff = lerp(L_normal, L_falu, min(f(A), f(B))); a split-view továbbra is L_normal-t kap.
-const field = sanitizeField({ id: 'sorsko', x: spot.x, y: spot.y, radius: VILLAGE_RADIUS });
+// S027: a split-view továbbra is L_normal-t kap; a póráz L_eff-je a mezőből jön.
 const sysCfg = tc.systemConfig({ walls, field });
 sysCfg.L = fieldL(field, () => tc.lNormal());
 const tether = createTetherSystem(sysCfg);
@@ -87,13 +93,14 @@ bindTetherConfigKeys(tc);
 snapSplitView(split, players, tc.lNormal()); // induláskor az összeolvadás állapota a játékosok távolságából
 bindLangKeys(i18n, window);                    // S019: F8 = nyelvváltás HU/EN (az S107 menü átveszi)
 const vis = createTetherVisual();              // a fonal megjelenített állapota; vis.on(fn): szint-események (hanghoz)
-const game = { time: 0, ticks: 0, fps: 0, players, camera, split, tether, walls, world, objects, interact, warp, clock, field };
+const game = { time: 0, ticks: 0, fps: 0, players, camera, split, tether, walls, world, objects, interact, warp, clock, field, sorsko };
 const drawList = [];                           // y-sort lista: játékosok + látható házak
 
 function update(dt) {
   input.update();
   stepWarp(warp, dt);
   stepClock(clock, dt);
+  stepSorsko(sorsko, dt);
   stepDayNight(dn, warpWhere(warp, game.players) ? 1 : 0, dt);
   updateStream(world, streamPoints(warp, game.players)); // a zsebben lévő játékos helyett a kinti kilépési pont
   syncObjects(objects, world);
@@ -150,6 +157,7 @@ function drawTetherHud(ctx, x, y) {
 
 function drawEntity(ctx, e, ox, oy) {
   if (e.warp) drawHouse(ctx, e.warp, ox, oy);
+  else if (e.sorsko) drawSorsko(ctx, sorskoSprites, e.sorsko, ox, oy);
   else drawPlayer(ctx, e, ox, oy);
 }
 
@@ -162,10 +170,12 @@ function drawPlayer(ctx, p, ox, oy) {
 function renderView(ctx, o, vw, vh, ci) {
   drawChunks(ctx, chunkRend, world, o.x, o.y, vw, vh);
   drawPockets(ctx, warp, o.x, o.y, vw, vh);
+  drawSorskoRing(ctx, sorsko, ringA, o.x, o.y, vw, vh); // halvány határ-gyűrű, a határhoz közeledve erősödik
   drawTether(ctx, o);
   drawList.length = 0;
   for (const p of game.players) drawList.push(p);
   visibleHouses(warp, o.x, o.y, vw, vh, drawList);
+  visibleSorsko(sorsko, o.x, o.y, vw, vh, drawList);
   drawYSorted(ctx, objSprites, objects, drawList, o.x, o.y, vw, vh, drawEntity);
   drawDayNight(ctx, dn, ci.minuteOfDay, vw, vh); // a promptok a színezés fölé kerülnek
   drawInteractPrompts(ctx, interact, o.x, o.y, vw, vh, { debug: tc.hud, lang: currentLang() }); // promptok a tárgyak fölött, zónák a debug HUD-dal
@@ -174,6 +184,7 @@ function renderView(ctx, o, vw, vh, ci) {
 function render() {
   const ctx = screen.ctx;
   const ci = clockInfo(clock);
+  ringA = ringAlpha(sorsko, ringStrength(sorsko, game.players));
   splitOffsets(split, offs);
   for (let i = 0; i < 2; i++) {
     const v = split.layout.views[i];
@@ -202,4 +213,4 @@ function frame(now) {
 }
 requestAnimationFrame(frame);
 
-window.__game = { game, split, splitRend, input, screen, tether, tc, vis, world, atlas, chunkRend, objects, objSprites, interact, warp, clock, dn, field };
+window.__game = { game, split, splitRend, input, screen, tether, tc, vis, world, atlas, chunkRend, objects, objSprites, interact, warp, clock, dn, field, sorsko };
