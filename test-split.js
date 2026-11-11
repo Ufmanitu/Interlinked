@@ -1,7 +1,7 @@
-// S023: két nézet (game-splitview.js + render-split.js) tesztjei. Node-ban fut, hamis canvas-szal.
+// S023: két nézet (game-splitview.js + render-split.js) tesztjei; S025: összeolvadás (hiszterézis, átmenet, közös kép). Node-ban fut, hamis canvas-szal.
 import { test, assert, eq, near } from './test-index.js';
-import { SPLIT_CONFIG, splitLayout, createSplitView, snapSplitView, stepSplitView, splitOffsets, viewContains } from './game-splitview.js';
-import { createSplitRenderer, beginView, composeSplit, SPLIT_STYLE } from './render-split.js';
+import { SPLIT_CONFIG, splitLayout, createSplitView, snapSplitView, stepSplitView, splitOffsets, viewContains, mergeRatio, mergeDecide, mergeBlend, normalL, viewOwner } from './game-splitview.js';
+import { createSplitRenderer, beginView, composeSplit, dividerAlpha, SPLIT_STYLE } from './render-split.js';
 import { cameraOffset, CAM_CONFIG } from './game-camera.js';
 import { createPlayer } from './game-player.js';
 import { createTetherSystem, stepTetherSystem, TETHER_CONFIG } from './tether-system.js';
@@ -156,4 +156,160 @@ test('split: 600 kocka a póráz-rendszerrel, két szkriptelt játékos (nincs N
     if (Math.abs(sv.cams[0].x - sv.cams[1].x) > 50) apart++;
   }
   assert(apart > 0, 'a két kamera sosem vált szét (mindkettő ugyanazt követi?)');
+});
+
+// ---- S025: összeolvadás ----
+const LN = { x: 864, y: 444 }; // L_normal (TETHER_CONFIG.L)
+const OFFS = () => [{ x: 0, y: 0 }, { x: 0, y: 0 }];
+function settle(sv, ps, n = 90, L = LN) { for (let i = 0; i < n; i++) stepSplitView(sv, ps, STEP, CAM_CONFIG, L); }
+const ownerVisible = (sv, ps, offs) => (splitOffsets(sv, offs), [0, 1].every(i => viewContains(sv, i, ps[viewOwner(sv, i)], 0, offs))); // mindkét játékos a SAJÁT nézetében (szétválva)
+const anyVisible = (sv, ps, offs) => (splitOffsets(sv, offs), ps.every(p => [0, 1].some(i => viewContains(sv, i, p, 0, offs)))); // legalább az egyik nézetben (összeolvadva a határ a felezőpontnál van)
+
+test('merge: r = max(|Δx|/Lx, |Δy|/Ly), L-változatok, hibás bemenet', () => {
+  near(mergeRatio(P(0, 0), P(432, 0), LN), 0.5); near(mergeRatio(P(0, 0), P(0, 444), LN), 1);
+  near(mergeRatio(P(0, 0), P(864, 222), LN), 1); near(mergeRatio(P(0, 0), P(432, 0), 864), 0.5); // a nagyobb tengely dönt; szám-L
+  assert(Number.isNaN(mergeRatio(P(NaN, 0), P(1, 1), LN)), 'hibás pozíció');
+  assert(Number.isNaN(mergeRatio(P(0, 0), P(1, 1), { x: 0, y: 5 })), 'nulla L');
+  assert(Number.isNaN(mergeRatio(P(0, 0), P(1, 1))), 'nincs L');
+  eq(normalL(() => 100).y, 100); eq(normalL(ps => ps.length, [1, 2]).x, 2); eq(normalL(-3), null); eq(normalL({ x: 1 }), null);
+});
+
+test('merge: hiszterézis (0,85 összeolvad, 1,0 felett szétválik, közte marad), zajtűrés a korlátnál', () => {
+  eq(mergeDecide(false, 0.85), true); eq(mergeDecide(false, 0.86), false);
+  eq(mergeDecide(true, 1.0), true); eq(mergeDecide(true, 1.0 + 1e-9), true); eq(mergeDecide(true, 1.004), true);
+  eq(mergeDecide(true, 1.01), false); eq(mergeDecide(false, 0.99), false); eq(mergeDecide(true, 0.9), true);
+  eq(mergeDecide(true, NaN), true); eq(mergeDecide(false, NaN), false);
+  const sv = createSplitView([P(0, 0), P(1000, 0)], undefined, LN);
+  eq(sv.merge.on, false);
+  const ps = [P(0, 0), P(1000, 0)];
+  const at = dx => { ps[1].x = dx; settle(sv, ps, 40); return sv.merge.on; };
+  eq(at(800), false, 'r=0,93 szétválva marad'); eq(at(730), true, 'r=0,845 összeolvad');
+  eq(at(850), true, 'r=0,98 összeolvadva marad'); eq(at(864 + 1e-7), true, 'a korlátnál zaj nem választ szét');
+  eq(at(880), false, 'r=1,02 szétválik'); eq(at(850), false, 'r=0,98 szétválva marad'); eq(at(0), true);
+  ps[1].x = 0; ps[1].y = 450; settle(sv, ps, 40); eq(sv.merge.on, false, 'az y tengely is szétválaszt (450 > 444)');
+});
+
+test('merge: a hiszterézis-sávban rezgő távolság nem villog (nincs állapotváltás)', () => {
+  const ps = [P(0, 0), P(500, 0)];
+  const sv = createSplitView(ps, undefined, LN);
+  eq(sv.merge.on, true);
+  let changes = 0, prev = sv.merge.on;
+  for (let f = 0; f < 600; f++) {
+    ps[1].x = 0.9 * 864 + 0.09 * 864 * (0.5 + 0.5 * Math.sin(f / 3)); // 0,90..0,99 L
+    stepSplitView(sv, ps, STEP, CAM_CONFIG, LN);
+    if (sv.merge.on !== prev) { changes++; prev = sv.merge.on; }
+    eq(mergeBlend(sv), 1, 'a kép végig összeolvadt');
+  }
+  eq(changes, 0);
+});
+
+test('merge: összeolvadva egyetlen közös kép (nézetek egymás mellé, felezőpont, nincs osztóvonal)', () => {
+  const ps = [P(1000, 700), P(1400, 720)];
+  const sv = createSplitView(ps, undefined, LN);
+  settle(sv, ps, 120);
+  eq(mergeBlend(sv), 1);
+  const o = splitOffsets(sv), ref = cameraOffset(sv.common, { w: 960, h: 540 });
+  eq(o[1].x - o[0].x, 480); eq(o[0].y, o[1].y); eq(o[0].x, ref.x); eq(o[0].y, ref.y);
+  near(o[0].x + 480, 1200, 1); near(o[0].y + 270, 710, 1); // a felezőpont a kép közepén
+  assert(anyVisible(sv, ps, OFFS()), 'mindkét játékos a közös képben');
+  for (let k = 0; k < 400; k++) { // a félpixel alatti legközelebbi lebegőpontos érték (nagy koordinátán): nincs 1 px-es varrat
+    sv.common.x = (k % 2 ? 1048000 : 5000) + k + 0.5 - (k % 2 ? 2 ** -33 : 2 ** -43); sv.common.y = 300000 + k + 0.5 - 2 ** -35; splitOffsets(sv, o);
+    eq(o[1].x - o[0].x, 480, 'varrat x ' + sv.common.x); eq(o[0].y, o[1].y, 'varrat y');
+  }
+});
+
+test('merge: az osztóvonal halványul, összeolvadva nem rajzolódik', () => {
+  eq(dividerAlpha(0), 1); eq(dividerAlpha(1), 0); near(dividerAlpha(0.25), 0.75); eq(dividerAlpha(NaN), 1); eq(dividerAlpha(-2), 1); eq(dividerAlpha(7), 0);
+  const rend = createSplitRenderer(splitLayout(), fakeCanvas), rec = [];
+  const ctx = { globalAlpha: 1, fillStyle: '', drawImage() {}, fillRect(...a) { rec.push([this.globalAlpha, this.fillStyle, ...a]); } };
+  composeSplit(ctx, rend, 0.5);
+  eq(rec.length, 1); near(rec[0][0], 0.5); eq(rec[0][1], SPLIT_STYLE.divider); eq(ctx.globalAlpha, 1, 'az alpha visszaáll');
+  rec.length = 0; composeSplit(ctx, rend, 1); eq(rec.length, 0);
+  rec.length = 0; composeSplit(ctx, rend); eq(rec.length, 1); near(rec[0][0], 1);
+});
+
+test('merge: szétválás és összeolvadás simított, monoton átmenet, a játékosok végig a saját nézetükben', () => {
+  const e0 = createSplitView([P(0, 0), P(2000, 0)], undefined, LN), q = [P(0, 0), P(300, 0)];
+  for (let i = 0; i < 6; i++) stepSplitView(e0, q, STEP, CAM_CONFIG, LN); // 0,1 mp az 0,4 mp-ből: s = 0,25
+  near(mergeBlend(e0), 0.15625, 1e-6, 'smoothstep (nem lineáris)');
+  const ps = [P(0, 0), P(300, 0)];
+  const sv = createSplitView(ps, undefined, LN);
+  const offs = OFFS(), prev = OFFS(); splitOffsets(sv, prev);
+  let transitions = 0, last = sv.merge.on, maxJump = 0, lastE = mergeBlend(sv), sawMid = false;
+  for (let f = 0; f < 700; f++) {
+    ps[1].x += (f < 350 ? 1 : -1) * 220 * STEP; // szét, majd vissza (kb. 1,8x játékos-sebesség: szigorúbb a valóságosnál)
+    stepSplitView(sv, ps, STEP, CAM_CONFIG, LN);
+    const e = mergeBlend(sv);
+    assert(Number.isFinite(e) && e >= 0 && e <= 1, 'e tartomány');
+    if (sv.merge.on !== last) { transitions++; last = sv.merge.on; }
+    assert(sv.merge.on ? e >= lastE - 1e-12 : e <= lastE + 1e-12, `kocka ${f}: az átmenet nem monoton`);
+    sawMid = sawMid || (e > 0.05 && e < 0.95); lastE = e;
+    assert(anyVisible(sv, ps, offs), `kocka ${f}: egy játékos egyik nézetben sem látszik (e=${e.toFixed(2)})`);
+    if (e < 0.5) assert(ownerVisible(sv, ps, offs), `kocka ${f}: egy játékos kilóg a saját nézetéből (e=${e.toFixed(2)})`);
+    for (let i = 0; i < 2; i++) { maxJump = Math.max(maxJump, Math.abs(offs[i].x - prev[i].x), Math.abs(offs[i].y - prev[i].y)); prev[i].x = offs[i].x; prev[i].y = offs[i].y; }
+  }
+  eq(transitions, 2, 'pontosan egy szétválás és egy összeolvadás'); eq(mergeBlend(sv), 1);
+  assert(sawMid, 'volt köztes (simított) állapot'); assert(maxJump <= 20, 'a nézet kocka-ugrása túl nagy: ' + maxJump);
+});
+
+test('merge: a bal/jobb nézet a bal/jobb játékost követi (a csere összeolvadva, láthatatlanul)', () => {
+  const ps = [P(0, 0), P(-300, 0)]; // a P1 a jobb oldalon
+  const sv = createSplitView(ps, undefined, LN);
+  eq(sv.order, 1); eq(viewOwner(sv, 0), 1); eq(viewOwner(sv, 1), 0);
+  const offs = OFFS();
+  for (let f = 0; f < 500; f++) {
+    ps[0].x += 220 * STEP; // a P1 jobbra távolodik
+    stepSplitView(sv, ps, STEP, CAM_CONFIG, LN);
+    assert(anyVisible(sv, ps, offs), `kocka ${f}: kilóg`);
+    if (mergeBlend(sv) < 0.5) assert(ownerVisible(sv, ps, offs), `kocka ${f}: kilóg a saját nézetéből`);
+  }
+  eq(sv.merge.on, false); eq(sv.order, 1);
+  near(sv.cams[0].x, ps[1].x, 200); near(sv.cams[1].x, ps[0].x, 200); // a bal nézet a bal játékosnál
+  // átlépnek egymáson összeolvadva: a sorrend megfordul, a kép nem ugrik
+  const ps2 = [P(-100, 0), P(100, 0)];
+  const s2 = createSplitView(ps2, undefined, LN);
+  eq(s2.order, 0); settle(s2, ps2, 90);
+  const before = splitOffsets(s2).map(o => ({ ...o }));
+  ps2[0].x = 150; ps2[1].x = -150; settle(s2, ps2, 1);
+  eq(s2.order, 1);
+  const after = splitOffsets(s2); // kamera-simítás miatt kis elmozdulás lehet, de nem ugrás
+  for (let i = 0; i < 2; i++) assert(Math.abs(after[i].x - before[i].x) <= 8, 'a csere ugrást okozott');
+});
+
+test('merge: L nélkül/hibás L-lel nincs összeolvadás; snap és létrehozás az állapotot is beállítja', () => {
+  const ps = [P(0, 0), P(50, 0)];
+  const sv = createSplitView(ps);
+  for (const L of [undefined, NaN, 0, null, { x: 5 }]) {
+    for (let i = 0; i < 60; i++) stepSplitView(sv, ps, STEP, CAM_CONFIG, L); // (settle: az undefined L-t LN-re cserélné)
+    eq(mergeBlend(sv), 0, 'L=' + JSON.stringify(L));
+  }
+  const m = createSplitView(ps, undefined, LN);
+  eq(m.merge.on, true); eq(mergeBlend(m), 1);
+  for (let i = 0; i < 60; i++) stepSplitView(m, ps, STEP, CAM_CONFIG); // az L kiesése: szétválva (nem ragad összeolvadva)
+  eq(mergeBlend(m), 0); snapSplitView(m, ps, LN);
+  snapSplitView(m, [P(0, 0), P(2000, 0)], LN);
+  eq(m.merge.on, false); eq(mergeBlend(m), 0);
+  snapSplitView(m, [P(1048576, 1048576), P(1048600, 1048590)], LN);
+  eq(m.merge.on, true); eq(mergeBlend(m), 1); near(m.common.x, 1048588, 1e-6);
+  const before = JSON.stringify([m.cams, m.common, m.merge]);
+  snapSplitView(m, [P(NaN, 0), undefined], LN); stepSplitView(m, [null, P(NaN, 1)], STEP, CAM_CONFIG, LN);
+  eq(JSON.stringify([m.cams, m.common, m.merge]), before, 'hibás játékos nem rontja el az állapotot');
+});
+
+test('merge: 600 kocka a póráz-rendszerrel falun kívül: végig összeolvadt kép, a korlátnál sem választ szét', () => {
+  const ps = [createPlayer(0, 0, 0), createPlayer(1, 100, 0)];
+  const tether = createTetherSystem({ ...TETHER_CONFIG, walls: [] });
+  const sv = createSplitView(ps, undefined, TETHER_CONFIG.L);
+  const offs = OFFS();
+  let atLimit = 0;
+  for (let f = 0; f < 600; f++) {
+    const a = f < 400 ? { x: 1, y: 0.3 } : { x: -1, y: -0.2 }, b = f < 100 ? { x: 0, y: 0 } : f < 450 ? { x: -1, y: 0 } : { x: 1, y: 1 };
+    stepTetherSystem(tether, ps, [a, b], STEP);
+    stepSplitView(sv, ps, STEP, CAM_CONFIG, TETHER_CONFIG.L);
+    eq(mergeBlend(sv), 1, `kocka ${f}: szétvált a kép a pórázon belül`);
+    assert(Number.isFinite(sv.common.x) && Number.isFinite(ps[0].x), 'NaN');
+    assert(anyVisible(sv, ps, offs), `kocka ${f}: kilóg`);
+    if (tether.stretch.x >= 0.999 || tether.stretch.y >= 0.999) atLimit++;
+  }
+  assert(atLimit > 20, 'a szkript sosem feszítette meg a pórázt (' + atLimit + ')');
 });

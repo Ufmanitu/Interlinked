@@ -19,7 +19,7 @@ import { createWarpSystem, warpProvider, warpColliders, handleWarpEvent, stepWar
 import { visibleHouses, drawHouse, drawPockets } from './render-warp.js';
 import { createGameClock, stepClock, clockInfo, bindClockKeys } from './game-clock.js';
 import { createDayNight, stepDayNight, drawDayNight, clockLabel, drawClockLabel } from './render-daynight.js';
-import { createSplitView, stepSplitView, snapSplitView, splitOffsets } from './game-splitview.js';
+import { createSplitView, stepSplitView, snapSplitView, splitOffsets, mergeBlend } from './game-splitview.js';
 import { createSplitRenderer, beginView, composeSplit } from './render-split.js';
 
 initDebug();
@@ -37,7 +37,7 @@ const SPAWN = [[spot.x - 70, spot.y], [spot.x + 70, spot.y]];
 const players = SPAWN.map(([x, y], i) => createPlayer(i, x, y));
 const camera = createCamera((players[0].x + players[1].x) / 2, (players[0].y + players[1].y) / 2);
 // Két nézet (S023): két kamera (mindkettő a saját játékosán), két offscreen canvas, fix függőleges osztás.
-// A közös (felezőpont) kamera megmarad az S025 összeolvadásához; a rajz most mindig az osztott nézet.
+// S025: |Δ| <= 0,85·L_normal -> a két nézet egy közös képet ad (nincs osztóvonal); |Δ| > L_normal -> szétválás (hiszterézis + simított átmenet).
 const split = createSplitView(players);
 const splitRend = createSplitRenderer(split.layout);
 const offs = [{ x: 0, y: 0 }, { x: 0, y: 0 }];
@@ -55,7 +55,7 @@ onInteract(interact, ev => {
   if (ev.kind !== 'warp' || !handleWarpEvent(warp, players, ev)) return;
   camera.x = (players[0].x + players[1].x) / 2; // a kamera a pár után ugrik (nincs végigsimítás a zsebig)
   camera.y = (players[0].y + players[1].y) / 2;
-  snapSplitView(split, players); // a két nézet is a párhoz ugrik
+  snapSplitView(split, players, tc.lNormal()); // a két nézet is a párhoz ugrik (és az összeolvadás állapota újraszámolódik)
 });
 const clock = createGameClock();               // S018: játékidő (nap/fázis, hookok: onClock); PageUp/PageDown/End: sebesség
 bindClockKeys(clock);
@@ -78,6 +78,7 @@ const tc = new TetherConfig();                 // hangolható póráz-értékek 
 const tether = createTetherSystem(tc.systemConfig({ walls }));
 const camCfg = tc.cameraConfig();
 bindTetherConfigKeys(tc);
+snapSplitView(split, players, tc.lNormal()); // induláskor az összeolvadás állapota a játékosok távolságából
 bindLangKeys(i18n, window);                    // S019: F8 = nyelvváltás HU/EN (az S107 menü átveszi)
 const vis = createTetherVisual();              // a fonal megjelenített állapota; vis.on(fn): szint-események (hanghoz)
 const game = { time: 0, ticks: 0, fps: 0, players, camera, split, tether, walls, world, objects, interact, warp, clock };
@@ -96,7 +97,7 @@ function update(dt) {
   stepInteraction(interact, game.players, inputs, dt); // a mozgás után: a zóna a végleges pozícióhoz igazodik
   stepTetherVisual(vis, tether, dt);
   stepCamera(game.camera, game.players[0], game.players[1], dt, camCfg);
-  stepSplitView(split, game.players, dt, camCfg);
+  stepSplitView(split, game.players, dt, camCfg, tc.lNormal()); // L_normal: az összeolvadás küszöbei ehhez mérve
   game.time += dt;
   game.ticks++;
 }
@@ -170,11 +171,11 @@ function render() {
     const v = split.layout.views[i];
     renderView(beginView(splitRend, i), offs[i], v.w, v.h, ci);
   }
-  composeSplit(ctx, splitRend); // a két nézet + osztóvonal a fő vászonra; a HUD/számláló fölé kerül
+  composeSplit(ctx, splitRend, mergeBlend(split)); // a két nézet + (az összeolvadással halványuló) osztóvonal a fő vászonra; a HUD/számláló fölé kerül
   ctx.font = '12px monospace';
   ctx.textBaseline = 'top';
   ctx.fillStyle = '#9fb4d0';
-  ctx.fillText(`Interlinked ${VERSION} (${VERSION_DATE})  FPS ${game.fps.toFixed(0)}  chunk ${world.chunks.size}/${chunkRend.cache.size}  obj ${objectCount(objects)}  int ${interact.total}  warp ${warpWhere(warp, game.players) || '-'}`, 8, 8);
+  ctx.fillText(`Interlinked ${VERSION} (${VERSION_DATE})  FPS ${game.fps.toFixed(0)}  chunk ${world.chunks.size}/${chunkRend.cache.size}  obj ${objectCount(objects)}  int ${interact.total}  warp ${warpWhere(warp, game.players) || '-'}  mrg ${mergeBlend(split).toFixed(2)}`, 8, 8);
   drawClockLabel(ctx, clockLabel(ci, currentLang(), clock.speed), VIRTUAL_W);
   if (tc.hud) drawTetherHud(ctx, 8, 28);
 }
