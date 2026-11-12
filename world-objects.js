@@ -15,11 +15,14 @@ const def = (type, solid, collider, sprite, palette) =>
 export const OBJECT_DEFS = Object.freeze({
   tree: def('tree', true, { w: 16, h: 10 }, { w: 48, h: 64, ax: 24, ay: 60 }, ['#5a3b22', '#74502d', '#2f6a30', '#3f8a3c', '#63b052']),
   stone: def('stone', true, { w: 24, h: 14 }, { w: 32, h: 24, ax: 16, ay: 22 }, ['#6b727c', '#8d95a0', '#4a5059', '#b4bcc6']),
+  // S037: gyógynövény – nem ütköző (át lehet lépni rajta); a "collider" csak az interakció-téglalap (a prompt/célzás ehhez igazodik)
+  herb: def('herb', false, { w: 14, h: 8 }, { w: 24, h: 24, ax: 12, ay: 20 }, ['#2f6a30', '#3f8a3c', '#63b052', '#d9c24a']),
 });
 
 export const OBJECT_CONFIG = {
   treeChance: 0.012,  // tile-onkénti esély a füves tile-okon
   stoneChance: 0.004,
+  herbChance: 0,      // S037: a gyógynövény esélye (alapból ki; a main.js a data-nodes HERB_CHANCE-szel kapcsolja be, a fa/kő elhelyezése nem változik)
   jitter: 6,          // a lábpont eltolása a tile közepétől (px, ±)
   salt: 0x0b7ec7,     // az RNG-sorozat elkülönítése a többi chunk-RNG-től
 };
@@ -95,6 +98,7 @@ export function scatterChunkObjects(seed, cx, cy, opts = {}) {
       let type = null;
       if (roll < cfg.treeChance) type = 'tree';
       else if (roll < cfg.treeChance + cfg.stoneChance) type = 'stone';
+      else if (roll < cfg.treeChance + cfg.stoneChance + (cfg.herbChance || 0)) type = 'herb'; // S037: a fa/kő küszöbei változatlanok
       if (!type) continue;
       if (lx < 1 || ly < 1 || lx > CHUNK_SIZE - 2 || ly > CHUNK_SIZE - 2) continue;
       const wx = x0 + lx, wy = y0 + ly;
@@ -129,7 +133,46 @@ export function createObjectStore(seed, opts = {}) {
     seed, opts,
     chunks: new Map(),  // chunk-kulcs -> {cx, cy, list, walls}
     version: 0,         // nő, ha a betöltött objektum-halmaz változik
+    removed: new Map(), // S037: kitermelt objektumok (id -> objektum | true): a chunk újratöltésekor sem jönnek vissza
   };
+}
+
+function keyOfId(id) {
+  const s = typeof id === 'string' ? id : '';
+  const i = s.indexOf(':');
+  return i > 0 ? s.slice(0, i) : null;
+}
+
+/**
+ * Objektum kivétele (kitermelés): a betöltött chunk listájából és ütközői közül kikerül, és a chunk újratöltésekor is kimarad.
+ * Betöltetlen chunk id-jét előre megjelöli. -> true, ha az id most el van rejtve; false, ha a betöltött chunkban nincs ilyen objektum.
+ */
+export function removeObject(os, id) {
+  const key = keyOfId(id);
+  if (!key || !os || !os.removed) return false;
+  if (os.removed.has(id)) return true;
+  const ch = os.chunks.get(key);
+  if (!ch) { os.removed.set(id, true); return true; }
+  const i = ch.list.findIndex(o => o.id === id);
+  if (i < 0) return false;
+  os.removed.set(id, ch.list[i]);
+  ch.list.splice(i, 1);
+  ch.walls = collidersOf(ch.list);
+  os.version++;
+  return true;
+}
+
+/** A kivett objektum visszatétele (újranövés). -> true, ha az id el volt rejtve. */
+export function restoreObject(os, id) {
+  if (!os || !os.removed || !os.removed.has(id)) return false;
+  const had = os.removed.get(id);
+  os.removed.delete(id);
+  const ch = os.chunks.get(keyOfId(id));
+  if (ch && !ch.list.some(o => o.id === id)) {
+    const obj = had && had !== true ? had : scatterChunkObjects(os.seed, ch.cx, ch.cy, os.opts).find(o => o.id === id);
+    if (obj) { ch.list.push(obj); ch.walls = collidersOf(ch.list); os.version++; }
+  }
+  return true;
 }
 
 /** A tár igazítása a világ-stream betöltött chunkjaihoz. -> {added:[kulcs], dropped:[kulcs]} */
@@ -137,7 +180,8 @@ export function syncObjects(os, ws) {
   const added = [], dropped = [];
   for (const [k, ch] of ws.chunks) {
     if (os.chunks.has(k)) continue;
-    const list = scatterChunkObjects(os.seed, ch.cx, ch.cy, os.opts);
+    let list = scatterChunkObjects(os.seed, ch.cx, ch.cy, os.opts);
+    if (os.removed && os.removed.size) list = list.filter(o => !os.removed.has(o.id)); // S037: a kitermeltek kimaradnak
     os.chunks.set(k, { cx: ch.cx, cy: ch.cy, list, walls: collidersOf(list) });
     added.push(k);
   }

@@ -1,6 +1,7 @@
-// render-objects.js (S015): kódból rajzolt placeholder-spriteok (fa, kő) és az y szerint rendezett rajzolás.
+// render-objects.js (S015): kódból rajzolt placeholder-spriteok (fa, kő; S037: gyógynövény) és az y szerint rendezett rajzolás.
 // Az S021 pixel-DSL és az S103 valódi art ide köt: a createObjectSprites cseréje, a rajzolási sorrend marad.
 import { OBJECT_DEFS, isObject, sortByY, visibleObjects } from './world-objects.js';
+import { gatherView } from './game-nodes.js';
 
 const MISSING = '#ff00ff'; // hiányzó sprite (a sérült adat látszik)
 
@@ -37,6 +38,14 @@ const PAINT = {
     blob(ctx, 16, 13, 12, 7, base);
     blob(ctx, 12, 10, 6, 3, light);
     blob(ctx, 10, 9, 2, 1, hi);
+  },
+  herb(ctx, d) { // S037: 24x24, lábpont (12,20) – kis lombcsokor sárga virággal
+    const [dark, mid, light, flower] = d.palette;
+    blob(ctx, 12, 19, 8, 2, 'rgba(0,0,0,0.22)');
+    ctx.fillStyle = dark; ctx.fillRect(7, 11, 3, 8); ctx.fillRect(12, 8, 3, 11); ctx.fillRect(16, 12, 3, 7);
+    ctx.fillStyle = mid; ctx.fillRect(8, 10, 2, 8); ctx.fillRect(13, 7, 2, 11); ctx.fillRect(17, 11, 2, 7);
+    blob(ctx, 8, 10, 3, 2, light); blob(ctx, 14, 7, 3, 2, light); blob(ctx, 18, 11, 3, 2, light);
+    ctx.fillStyle = flower; ctx.fillRect(13, 4, 3, 3); ctx.fillRect(7, 7, 2, 2); ctx.fillRect(17, 8, 2, 2);
   },
 };
 
@@ -79,4 +88,23 @@ export function drawYSorted(ctx, rend, os, players, ox, oy, viewW, viewH, drawPl
     }
   }
   return { objects, players: nPl };
+}
+
+// S037: gyűjtés-sáv a célpont lába alatt (a prompt a tetején van): a kitermelés felé haladás, játékosonként egy sor; tele inventorynál borostyán.
+export const NODE_BAR = { w: 28, h: 4, gap: 4, colors: ['#4d8cff', '#ff5d5d'], full: '#ffb45a', back: 'rgba(8,12,20,0.75)' };
+
+/** A gyűjtés-sávok rajza a nézetbe (ox,oy = a nézet bal-felső sarka). -> a kirajzolt sávok száma. */
+export function drawNodeBars(ctx, ns, ox, oy, viewW, viewH, cfg = NODE_BAR) {
+  let n = 0;
+  for (let i = 0; i < 2; i++) {
+    const g = gatherView(ns, i);
+    if (!g || !(g.ratio > 0)) continue;
+    const x = Math.round(g.ref.x) - Math.round(ox) - cfg.w / 2, y = Math.round(g.ref.y) - Math.round(oy) + cfg.gap + i * (cfg.h + 2);
+    if (x > viewW || x + cfg.w < 0 || y > viewH || y + cfg.h < 0) continue;
+    ctx.fillStyle = cfg.back; ctx.fillRect(x - 1, y - 1, cfg.w + 2, cfg.h + 2);
+    ctx.fillStyle = g.full ? cfg.full : cfg.colors[i];
+    ctx.fillRect(x, y, Math.max(1, Math.round(cfg.w * g.ratio)), cfg.h);
+    n++;
+  }
+  return n;
 }

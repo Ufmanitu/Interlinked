@@ -18,9 +18,11 @@ import { createTileAtlas } from './render-tiles.js';
 import { WORLD_SEED, createWorldStream, warmStream, updateStream, streamWalls, findOpenSpot } from './world-stream.js';
 import { createChunkRenderer, drawChunks } from './render-chunks.js';
 import { createObjectStore, syncObjects, objectColliders, objectCount } from './world-objects.js';
-import { createObjectSprites, drawYSorted } from './render-objects.js';
-import { createInteractSystem, addObjectSource, addProvider, onInteract, stepInteraction } from './game-interact.js';
-import { drawInteractPrompts } from './render-interact.js';
+import { createObjectSprites, drawYSorted, drawNodeBars } from './render-objects.js';
+import { createInteractSystem, addObjectSource, addProvider, onInteract, stepInteraction, defineInteractable, targetOf } from './game-interact.js';
+import { drawInteractPrompts, INTERACT_TEXT } from './render-interact.js';
+import { NODE_TEXTS, HERB_CHANCE } from './data-nodes.js';
+import { createNodeSystem, stepNodes, nodeInteractables } from './game-nodes.js';
 import { createWarpSystem, warpProvider, warpColliders, handleWarpEvent, stepWarp, streamPoints, warpWhere } from './world-warp.js';
 import { visibleHouses, drawHouse, drawPockets } from './render-warp.js';
 import { createGameClock, stepClock, clockInfo, bindClockKeys } from './game-clock.js';
@@ -39,6 +41,8 @@ registerTexts(SAVE_TEXTS, 'save.');           // S032: mentés-szövegek (HU/EN)
 registerTexts(ITEM_TEXTS, ITEM_TEXT_PREFIX);  // S035: tárgy-nevek (item.<id>)
 registerTexts(INVUI_TEXTS, 'inv.');           // S035: inventory UI szövegek (inv.*)
 registerTexts(WALLET_TEXTS, 'wallet.');       // S036: pénz-szövegek (wallet.*)
+registerTexts(NODE_TEXTS, '');                // S037: obj.herb, act.gather
+for (const l of ['hu', 'en']) for (const k of Object.keys(NODE_TEXTS[l])) if (k.startsWith('act.')) INTERACT_TEXT[l][k] = NODE_TEXTS[l][k]; // a prompt még az ideiglenes INTERACT_TEXT-ből olvas
 
 export const STEP = 1 / 60; // fix 60 Hz logikai lépés
 const MAX_FRAME = 0.25;     // spirál-védelem
@@ -61,12 +65,14 @@ const splitRend = createSplitRenderer(split.layout);
 const offs = [{ x: 0, y: 0 }, { x: 0, y: 0 }];
 const world = createWorldStream(WORLD_SEED);
 warmStream(world, players);
-// Objektumok (S015): fa, kő; a kezdőhely körül szabad terület marad; az ütközők a falak közé kerülnek.
-const objects = createObjectStore(WORLD_SEED, { keepFree: [{ x: spot.x, y: spot.y, r: 224 }] });
+// Objektumok (S015): fa, kő (S037: + gyógynövény); a kezdőhely körül szabad terület marad; az ütközők a falak közé kerülnek.
+const objects = createObjectStore(WORLD_SEED, { keepFree: [{ x: spot.x, y: spot.y, r: 224 }], cfg: { herbChance: HERB_CHANCE } });
 syncObjects(objects, world);
 const objSprites = createObjectSprites();
 const interact = createInteractSystem();     // S016: interakciós zóna, célpont, egy gomb; a tárgyak a forrásból jönnek
 addObjectSource(interact, objects);
+const nodes = createNodeSystem(objects, { seed: WORLD_SEED }); // S037: gyűjthető node-ok (fa, kő, gyógynövény): tartott interakció-gomb -> ütések -> drop az inventoryba, újranövés a játékidővel
+for (const [type, def] of Object.entries(nodeInteractables(nodes))) defineInteractable(interact, type, def); // akció: 'gather'
 const warp = createWarpSystem({ anchor: spot }); // S017: kinti házak + beltér-zsebek (data-warps.js); páros be-/kilépés
 addProvider(interact, warpProvider(warp));
 onInteract(interact, ev => {
@@ -110,7 +116,7 @@ bindTetherConfigKeys(tc);
 snapSplitView(split, players, tc.lNormal()); // induláskor az összeolvadás állapota a játékosok távolságából
 bindLangKeys(i18n, window);                    // S019: F8 = nyelvváltás HU/EN (az S107 menü átveszi)
 const vis = createTetherVisual();              // a fonal megjelenített állapota; vis.on(fn): szint-események (hanghoz)
-const game = { time: 0, ticks: 0, fps: 0, players, inventories, wallets, camera, split, tether, walls, world, objects, interact, warp, clock, field, sorsko, menus, invUi };
+const game = { time: 0, ticks: 0, fps: 0, players, inventories, wallets, camera, split, tether, walls, world, objects, interact, warp, clock, field, sorsko, menus, invUi, nodes };
 // S032: mentés (F2 mentés, F3 betöltés, F4 export vágólapra, F7 import beillesztéssel; az S049 menü átveszi). A mentett állapot: játékos-pozíciók, seed, GameClock, Sorskő-szint.
 function afterLoad() {
   camera.x = (players[0].x + players[1].x) / 2; // a kamera, a nézetek és a chunkok a betöltött helyhez ugranak
@@ -142,6 +148,7 @@ function update(dt) {
   syncEncumbrance(game.players, game.inventories); // a teher (p.load a k-hookba, p.speedMul a saját sebességbe) a póráz-lépés előtt
   stepTetherSystem(tether, game.players, inputs, dt);
   stepInteraction(interact, game.players, inputs, dt); // a mozgás után: a zóna a végleges pozícióhoz igazodik
+  stepNodes(nodes, game.players, inputs, [targetOf(interact, 0), targetOf(interact, 1)], game.inventories, clock.t, dt); // S037: gyűjtés (a SZŰRT bemenet: nyitott menünél nincs interakció)
   stepTetherVisual(vis, tether, dt);
   stepCamera(game.camera, game.players[0], game.players[1], dt, camCfg);
   stepSplitView(split, game.players, dt, camCfg, tc.lNormal(), fieldShare(field, game.players[0], game.players[1]) <= 0); // L_normal: az összeolvadás küszöbei ehhez mérve; falun kívül (tight) r <= 1-nél már összeolvad (S030)
@@ -214,6 +221,7 @@ function renderView(ctx, o, vw, vh, ci) {
   drawYSorted(ctx, objSprites, objects, drawList, o.x, o.y, vw, vh, drawEntity);
   drawDayNight(ctx, dn, ci.minuteOfDay, vw, vh); // a promptok a színezés fölé kerülnek
   drawInteractPrompts(ctx, interact, o.x, o.y, vw, vh, { debug: tc.hud, lang: currentLang() }); // promptok a tárgyak fölött, zónák a debug HUD-dal
+  drawNodeBars(ctx, nodes, o.x, o.y, vw, vh); // S037: gyűjtés-sáv a célpont lába alatt
 }
 
 function render() {
@@ -229,7 +237,7 @@ function render() {
   ctx.font = '12px monospace';
   ctx.textBaseline = 'top';
   ctx.fillStyle = '#9fb4d0';
-  ctx.fillText(`Interlinked ${VERSION} (${VERSION_DATE})  FPS ${game.fps.toFixed(0)}  chunk ${world.chunks.size}/${chunkRend.cache.size}  obj ${objectCount(objects)}  int ${interact.total}  warp ${warpWhere(warp, game.players) || '-'}  mrg ${mergeBlend(split).toFixed(2)}  vch ${warpWhere(warp, game.players) ? 0 : missingViewChunks(world, offs, split.layout)}`, 8, 8);
+  ctx.fillText(`Interlinked ${VERSION} (${VERSION_DATE})  FPS ${game.fps.toFixed(0)}  chunk ${world.chunks.size}/${chunkRend.cache.size}  obj ${objectCount(objects)}  nod ${nodes.depleted.size}  int ${interact.total}  warp ${warpWhere(warp, game.players) || '-'}  mrg ${mergeBlend(split).toFixed(2)}  vch ${warpWhere(warp, game.players) ? 0 : missingViewChunks(world, offs, split.layout)}`, 8, 8);
   drawClockLabel(ctx, clockLabel(ci, currentLang(), clock.speed), VIRTUAL_W);
   drawHud(ctx, game.players, menus, VIRTUAL_W, VIRTUAL_H, undefined, undefined, game.wallets); // S036: + pénz; S029: játékosonkénti HUD az alsó sarkokban (a nézetek és a színezés fölött)
   drawInventories(ctx, game.players, game.inventories, invUi, menus, VIRTUAL_W, VIRTUAL_H); // S035: a nyitott menü inventory-panelje (a menü-vázat eltakarja)
@@ -266,4 +274,4 @@ function frame(now) {
 }
 requestAnimationFrame(frame);
 
-window.__game = { game, split, splitRend, input, screen, tether, tc, vis, world, atlas, chunkRend, objects, objSprites, interact, warp, clock, dn, field, sorsko, menus, saveCtl, invUi, inventories, wallets, give: (i, id, n = 1) => addItem(inventories[i], id, n), pay: (i, n = 1) => deposit(wallets[i], n) }; // give: fejlesztői segéd (a node-ok/felvétel az S037/S039-ben jönnek)
+window.__game = { game, split, splitRend, input, screen, tether, tc, vis, world, atlas, chunkRend, objects, objSprites, interact, warp, clock, dn, field, sorsko, menus, saveCtl, invUi, inventories, wallets, nodes, give: (i, id, n = 1) => addItem(inventories[i], id, n), pay: (i, n = 1) => deposit(wallets[i], n) }; // give: fejlesztői segéd (a node-ok S037-ben bekötve; a földre dobott tárgy felvétele az S039-ben jön)
