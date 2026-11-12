@@ -11,6 +11,7 @@ const MODULES = [
   './game-interact.js', './render-interact.js', './data-warps.js', './world-warp.js', './render-warp.js', './game-clock.js', './render-daynight.js',
   './i18n.js', './data-text.js', './data-macro.js', './world-macro.js', './world-sprite.js', './render-sprite.js', './data-sprites.js',
   './game-splitview.js', './render-split.js', './game-field.js', './game-sorsko.js', './render-sorsko.js',
+  './data-items.js', './game-inventory.js', './game-encumbrance.js', // S033/S034
 ];
 const FRAMES = 600;
 const DT = 1 / 60;
@@ -416,4 +417,38 @@ test('smoke (S015): 600 kocka objektumokkal: ütköző fák/kövek, y-sort, él�
   assert(Math.hypot(P[0].x - start[0], P[0].y - start[1]) > 100, 'a játékosok elmozdultak');
   assert(refreshes >= 1 && maxVisible > 0, 'objektumok láthatók voltak: ' + maxVisible);
   assert(os.chunks.size === ws.chunks.size && os.chunks.size <= 18, 'a tár a streamet követi, korlátos');
+});
+
+// S034: 600 kocka két szkriptelt játékossal, a teher a pórázban (inventory-súly -> p.load/p.speedMul), kétszer futtatva: azonos eredmény.
+test('smoke: 600 kocka teherrel – invariánsok és determinizmus', async () => {
+  const { createPlayer } = await import('./game-player.js');
+  const { createPlayerInventories, addItem, removeItem } = await import('./game-inventory.js');
+  const { syncEncumbrance, ENCUMBRANCE_CONFIG: EC } = await import('./game-encumbrance.js');
+  const { createTetherSystem, stepTetherSystem } = await import('./tether-system.js');
+  const run = () => {
+    const P = [createPlayer(0, 400, 300), createPlayer(1, 500, 300)];
+    const I = createPlayerInventories();
+    const sys = createTetherSystem({ L, k: 0.5 });
+    let over = false;
+    for (let f = 0; f < FRAMES; f++) {
+      if (f === 50) addItem(I[1], 'stone', 30);        // 90 kg: a P2 túlterhelt
+      if (f === 300) removeItem(I[1], 'stone', 30);    // ürítés: a teher megszűnik
+      if (f === 350) addItem(I[0], 'wood', 15);        // 30 kg: a P1 kapacitáson belül
+      syncEncumbrance(P, I);
+      const px = Math.abs(P[0].x - P[1].x), py = Math.abs(P[0].y - P[1].y);
+      stepTetherSystem(sys, P, [scripted(0, f), scripted(1, f)], DT);
+      for (const p of P) {
+        assert(Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.load), `NaN a ${f}. kockában`);
+        assert(p.speedMul >= EC.minSpeedMul - EPS && p.speedMul <= 1 + EPS, `speedMul a ${f}. kockában: ${p.speedMul}`);
+      }
+      assert(sys.k.a >= 0 && sys.k.a <= 1 && sys.k.b >= 0 && sys.k.b <= 1, `k tartomány a ${f}. kockában`);
+      assert(Math.abs(P[0].x - P[1].x) <= Math.max(L.x, px) + EPS, `táv. x > L_eff a ${f}. kockában`);
+      assert(Math.abs(P[0].y - P[1].y) <= Math.max(L.y, py) + EPS, `táv. y > L_eff a ${f}. kockában`);
+      if (P[1].overload > 0) over = true;
+    }
+    assert(over, 'a P2 túlterhelt volt');
+    eq(P[1].load, 0, 'az ürítés után nincs teher'); assert(P[0].load > 0 && P[0].speedMul === 1, 'P1: teher, de nincs lassulás');
+    return JSON.stringify(P.map(p => [p.x, p.y, p.load, p.speedMul]));
+  };
+  eq(run(), run(), 'azonos bemenetre azonos állapot');
 });

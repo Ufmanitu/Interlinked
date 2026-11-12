@@ -3,6 +3,8 @@ import { Input } from './core-input.js';
 import { VERSION, VERSION_DATE } from './version.js';
 import { initDebug, copyText } from './core-debug.js';
 import { createPlayer } from './game-player.js';
+import { createPlayerInventories } from './game-inventory.js';
+import { syncEncumbrance } from './game-encumbrance.js';
 import { createCamera, stepCamera, cameraOffset } from './game-camera.js';
 import { createTetherSystem, stepTetherSystem } from './tether-system.js';
 import { TetherConfig, bindTetherConfigKeys, tetherHudLines, HUD_TEXT } from './tether-config.js';
@@ -42,6 +44,7 @@ const input = new Input();
 const spot = findOpenSpot(WORLD_SEED, 0, 0) || { x: 16, y: 16 };
 const SPAWN = [[spot.x - 70, spot.y], [spot.x + 70, spot.y]];
 const players = SPAWN.map(([x, y], i) => createPlayer(i, x, y));
+const inventories = createPlayerInventories(); // S034: játékosonként külön inventory; az összsúly a p.load-ba és a p.speedMul-ba kerül (az UI az S035-ben)
 const camera = createCamera((players[0].x + players[1].x) / 2, (players[0].y + players[1].y) / 2);
 // Két nézet (S023): két kamera (mindkettő a saját játékosán), két offscreen canvas, fix függőleges osztás.
 // S025: |Δ| <= 0,85·L_normal -> a két nézet egy közös képet ad (nincs osztóvonal); |Δ| > L_normal -> szétválás (hiszterézis + simított átmenet).
@@ -98,7 +101,7 @@ bindTetherConfigKeys(tc);
 snapSplitView(split, players, tc.lNormal()); // induláskor az összeolvadás állapota a játékosok távolságából
 bindLangKeys(i18n, window);                    // S019: F8 = nyelvváltás HU/EN (az S107 menü átveszi)
 const vis = createTetherVisual();              // a fonal megjelenített állapota; vis.on(fn): szint-események (hanghoz)
-const game = { time: 0, ticks: 0, fps: 0, players, camera, split, tether, walls, world, objects, interact, warp, clock, field, sorsko, menus };
+const game = { time: 0, ticks: 0, fps: 0, players, inventories, camera, split, tether, walls, world, objects, interact, warp, clock, field, sorsko, menus };
 // S032: mentés (F2 mentés, F3 betöltés, F4 export vágólapra, F7 import beillesztéssel; az S049 menü átveszi). A mentett állapot: játékos-pozíciók, seed, GameClock, Sorskő-szint.
 function afterLoad() {
   camera.x = (players[0].x + players[1].x) / 2; // a kamera, a nézetek és a chunkok a betöltött helyhez ugranak
@@ -125,6 +128,7 @@ function update(dt) {
   syncObjects(objects, world);
   refreshWalls(); // a betöltött chunkok/objektumok változtak -> falak újraépítése (ugyanabban a tömbben)
   const inputs = stepMenus(menus, [input.get(0), input.get(1)]); // nyitott menünél a karakter áll (nincs mozgás/interakció), de a pórázon húzható
+  syncEncumbrance(game.players, game.inventories); // a teher (p.load a k-hookba, p.speedMul a saját sebességbe) a póráz-lépés előtt
   stepTetherSystem(tether, game.players, inputs, dt);
   stepInteraction(interact, game.players, inputs, dt); // a mozgás után: a zóna a végleges pozícióhoz igazodik
   stepTetherVisual(vis, tether, dt);

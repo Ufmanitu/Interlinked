@@ -9,8 +9,10 @@ export function createPlayer(index, x, y) {
 }
 
 // Kívánt sebesség az inputból (px/s), a póráz-logika bemenete.
+// p.speedMul (opcionális, alap 1; S034 teher-lassulás): a saját sebesség szorzója, hibás érték -> 1, negatív -> 0.
 export function desiredVelocity(p, inp) {
-  return { x: (inp.x || 0) * p.speed, y: (inp.y || 0) * p.speed };
+  const m = Number.isFinite(p.speedMul) ? Math.max(0, p.speedMul) : 1;
+  return { x: (inp.x || 0) * p.speed * m, y: (inp.y || 0) * p.speed * m };
 }
 
 // A póráz által megengedett tényleges sebesség alkalmazása (a játékos önállóan nem mozog).
