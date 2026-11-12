@@ -1,12 +1,12 @@
 import { createScreen, VIRTUAL_W, VIRTUAL_H } from './core-screen.js';
 import { Input } from './core-input.js';
 import { VERSION, VERSION_DATE } from './version.js';
-import { initDebug } from './core-debug.js';
+import { initDebug, copyText } from './core-debug.js';
 import { createPlayer } from './game-player.js';
 import { createCamera, stepCamera, cameraOffset } from './game-camera.js';
 import { createTetherSystem, stepTetherSystem } from './tether-system.js';
 import { TetherConfig, bindTetherConfigKeys, tetherHudLines, HUD_TEXT } from './tether-config.js';
-import { i18n, currentLang, bindLangKeys } from './i18n.js';
+import { i18n, currentLang, bindLangKeys, registerTexts, t } from './i18n.js';
 import { createTetherVisual, stepTetherVisual, tetherCurve, tetherStyle } from './tether-visual.js';
 import { createTileAtlas } from './render-tiles.js';
 import { WORLD_SEED, createWorldStream, warmStream, updateStream, streamWalls, findOpenSpot } from './world-stream.js';
@@ -26,8 +26,10 @@ import { SORSKO_CONFIG, createSorsko, stepSorsko, sorskoCollider, ringStrength, 
 import { createSorskoSprites, visibleSorsko, drawSorsko, drawSorskoRing } from './render-sorsko.js';
 import { createMenus, stepMenus, missingViewChunks } from './game-hud.js';
 import { drawHud } from './render-hud.js';
+import { SAVE_TEXTS, createSaveController, bindSaveKeys, stepSaveToast } from './game-save.js';
 
 initDebug();
+registerTexts(SAVE_TEXTS, 'save.');           // S032: mentés-szövegek (HU/EN)
 
 export const STEP = 1 / 60; // fix 60 Hz logikai lépés
 const MAX_FRAME = 0.25;     // spirál-védelem
@@ -97,6 +99,20 @@ snapSplitView(split, players, tc.lNormal()); // induláskor az összeolvadás á
 bindLangKeys(i18n, window);                    // S019: F8 = nyelvváltás HU/EN (az S107 menü átveszi)
 const vis = createTetherVisual();              // a fonal megjelenített állapota; vis.on(fn): szint-események (hanghoz)
 const game = { time: 0, ticks: 0, fps: 0, players, camera, split, tether, walls, world, objects, interact, warp, clock, field, sorsko, menus };
+// S032: mentés (F2 mentés, F3 betöltés, F4 export vágólapra, F7 import beillesztéssel; az S049 menü átveszi). A mentett állapot: játékos-pozíciók, seed, GameClock, Sorskő-szint.
+function afterLoad() {
+  camera.x = (players[0].x + players[1].x) / 2; // a kamera, a nézetek és a chunkok a betöltött helyhez ugranak
+  camera.y = (players[0].y + players[1].y) / 2;
+  warmStream(world, streamPoints(warp, players));
+  syncObjects(objects, world);
+  wallsKey = '';
+  refreshWalls();
+  snapSplitView(split, players, tc.lNormal());
+}
+const saveCtl = createSaveController({ players, clock, sorsko, seed: WORLD_SEED }, {
+  copy: copyText, ask: key => (typeof window !== 'undefined' && window.prompt ? window.prompt(t(key)) : null), onLoaded: afterLoad,
+});
+bindSaveKeys(saveCtl);
 const drawList = [];                           // y-sort lista: játékosok + látható házak
 
 function update(dt) {
@@ -114,6 +130,7 @@ function update(dt) {
   stepTetherVisual(vis, tether, dt);
   stepCamera(game.camera, game.players[0], game.players[1], dt, camCfg);
   stepSplitView(split, game.players, dt, camCfg, tc.lNormal(), fieldShare(field, game.players[0], game.players[1]) <= 0); // L_normal: az összeolvadás küszöbei ehhez mérve; falun kívül (tight) r <= 1-nél már összeolvad (S030)
+  stepSaveToast(saveCtl, dt);
   game.time += dt;
   game.ticks++;
 }
@@ -201,6 +218,22 @@ function render() {
   drawClockLabel(ctx, clockLabel(ci, currentLang(), clock.speed), VIRTUAL_W);
   drawHud(ctx, game.players, menus, VIRTUAL_W, VIRTUAL_H); // S029: játékosonkénti HUD az alsó sarkokban (a nézetek és a színezés fölött)
   if (tc.hud) drawTetherHud(ctx, 8, 28);
+  if (saveCtl.toast) drawSaveToast(ctx, saveCtl.toast);
+}
+
+// Mentés-értesítés (alul középen, a HUD-panelek között); zöld = siker, piros = hiba.
+function drawSaveToast(ctx, toast) {
+  const text = t(toast.key);
+  ctx.font = '14px monospace';
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'center';
+  const w = Math.ceil(ctx.measureText(text).width) + 20;
+  const x = VIRTUAL_W / 2, y = VIRTUAL_H - 28;
+  ctx.fillStyle = toast.ok ? 'rgba(10,50,24,0.85)' : 'rgba(70,14,14,0.88)';
+  ctx.fillRect(Math.round(x - w / 2), y - 13, w, 26);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText(text, x, y);
+  ctx.textAlign = 'left';
 }
 
 let last = performance.now(), acc = 0, fpsAcc = 0, fpsN = 0;
@@ -217,4 +250,4 @@ function frame(now) {
 }
 requestAnimationFrame(frame);
 
-window.__game = { game, split, splitRend, input, screen, tether, tc, vis, world, atlas, chunkRend, objects, objSprites, interact, warp, clock, dn, field, sorsko, menus };
+window.__game = { game, split, splitRend, input, screen, tether, tc, vis, world, atlas, chunkRend, objects, objSprites, interact, warp, clock, dn, field, sorsko, menus, saveCtl };
