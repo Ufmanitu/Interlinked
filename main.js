@@ -3,7 +3,10 @@ import { Input } from './core-input.js';
 import { VERSION, VERSION_DATE } from './version.js';
 import { initDebug, copyText } from './core-debug.js';
 import { createPlayer } from './game-player.js';
-import { createPlayerInventories } from './game-inventory.js';
+import { createPlayerInventories, addItem } from './game-inventory.js';
+import { ITEM_TEXTS, ITEM_TEXT_PREFIX } from './data-items.js';
+import { INVUI_TEXTS, createInvUi, stepInvUi } from './game-invui.js';
+import { drawInventories } from './render-invui.js';
 import { syncEncumbrance } from './game-encumbrance.js';
 import { createCamera, stepCamera, cameraOffset } from './game-camera.js';
 import { createTetherSystem, stepTetherSystem } from './tether-system.js';
@@ -32,6 +35,8 @@ import { SAVE_TEXTS, createSaveController, bindSaveKeys, stepSaveToast } from '.
 
 initDebug();
 registerTexts(SAVE_TEXTS, 'save.');           // S032: mentés-szövegek (HU/EN)
+registerTexts(ITEM_TEXTS, ITEM_TEXT_PREFIX);  // S035: tárgy-nevek (item.<id>)
+registerTexts(INVUI_TEXTS, 'inv.');           // S035: inventory UI szövegek (inv.*)
 
 export const STEP = 1 / 60; // fix 60 Hz logikai lépés
 const MAX_FRAME = 0.25;     // spirál-védelem
@@ -68,6 +73,7 @@ onInteract(interact, ev => {
   snapSplitView(split, players, tc.lNormal()); // a két nézet is a párhoz ugrik (és az összeolvadás állapota újraszámolódik)
 });
 const menus = createMenus();                   // S029: játékosonkénti real-time menü váz (a karakter áll, a pórázon húzható)
+const invUi = createInvUi();                   // S035: inventory UI állapot (játékosonként kurzor + kijelölés)
 const clock = createGameClock();               // S018: játékidő (nap/fázis, hookok: onClock); PageUp/PageDown/End: sebesség
 bindClockKeys(clock);
 const dn = createDayNight();                   // S018: nap/éjszaka színezés (beltérben halványabb)
@@ -101,7 +107,7 @@ bindTetherConfigKeys(tc);
 snapSplitView(split, players, tc.lNormal()); // induláskor az összeolvadás állapota a játékosok távolságából
 bindLangKeys(i18n, window);                    // S019: F8 = nyelvváltás HU/EN (az S107 menü átveszi)
 const vis = createTetherVisual();              // a fonal megjelenített állapota; vis.on(fn): szint-események (hanghoz)
-const game = { time: 0, ticks: 0, fps: 0, players, inventories, camera, split, tether, walls, world, objects, interact, warp, clock, field, sorsko, menus };
+const game = { time: 0, ticks: 0, fps: 0, players, inventories, camera, split, tether, walls, world, objects, interact, warp, clock, field, sorsko, menus, invUi };
 // S032: mentés (F2 mentés, F3 betöltés, F4 export vágólapra, F7 import beillesztéssel; az S049 menü átveszi). A mentett állapot: játékos-pozíciók, seed, GameClock, Sorskő-szint.
 function afterLoad() {
   camera.x = (players[0].x + players[1].x) / 2; // a kamera, a nézetek és a chunkok a betöltött helyhez ugranak
@@ -127,7 +133,9 @@ function update(dt) {
   updateStream(world, streamPoints(warp, game.players)); // a zsebben lévő játékos helyett a kinti kilépési pont
   syncObjects(objects, world);
   refreshWalls(); // a betöltött chunkok/objektumok változtak -> falak újraépítése (ugyanabban a tömbben)
-  const inputs = stepMenus(menus, [input.get(0), input.get(1)]); // nyitott menünél a karakter áll (nincs mozgás/interakció), de a pórázon húzható
+  const raw = [input.get(0), input.get(1)];
+  const inputs = stepMenus(menus, raw); // nyitott menünél a karakter áll (nincs mozgás/interakció), de a pórázon húzható
+  stepInvUi(invUi, menus, raw, game.inventories, dt); // S035: az inventory UI a NYERS bemenetet kapja (a szűrt nyitva nullázott)
   syncEncumbrance(game.players, game.inventories); // a teher (p.load a k-hookba, p.speedMul a saját sebességbe) a póráz-lépés előtt
   stepTetherSystem(tether, game.players, inputs, dt);
   stepInteraction(interact, game.players, inputs, dt); // a mozgás után: a zóna a végleges pozícióhoz igazodik
@@ -221,6 +229,7 @@ function render() {
   ctx.fillText(`Interlinked ${VERSION} (${VERSION_DATE})  FPS ${game.fps.toFixed(0)}  chunk ${world.chunks.size}/${chunkRend.cache.size}  obj ${objectCount(objects)}  int ${interact.total}  warp ${warpWhere(warp, game.players) || '-'}  mrg ${mergeBlend(split).toFixed(2)}  vch ${warpWhere(warp, game.players) ? 0 : missingViewChunks(world, offs, split.layout)}`, 8, 8);
   drawClockLabel(ctx, clockLabel(ci, currentLang(), clock.speed), VIRTUAL_W);
   drawHud(ctx, game.players, menus, VIRTUAL_W, VIRTUAL_H); // S029: játékosonkénti HUD az alsó sarkokban (a nézetek és a színezés fölött)
+  drawInventories(ctx, game.players, game.inventories, invUi, menus, VIRTUAL_W, VIRTUAL_H); // S035: a nyitott menü inventory-panelje (a menü-vázat eltakarja)
   if (tc.hud) drawTetherHud(ctx, 8, 28);
   if (saveCtl.toast) drawSaveToast(ctx, saveCtl.toast);
 }
@@ -254,4 +263,4 @@ function frame(now) {
 }
 requestAnimationFrame(frame);
 
-window.__game = { game, split, splitRend, input, screen, tether, tc, vis, world, atlas, chunkRend, objects, objSprites, interact, warp, clock, dn, field, sorsko, menus, saveCtl };
+window.__game = { game, split, splitRend, input, screen, tether, tc, vis, world, atlas, chunkRend, objects, objSprites, interact, warp, clock, dn, field, sorsko, menus, saveCtl, invUi, inventories, give: (i, id, n = 1) => addItem(inventories[i], id, n) }; // give: fejlesztői segéd (a node-ok/felvétel az S037/S039-ben jönnek)
