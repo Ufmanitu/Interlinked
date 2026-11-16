@@ -33,6 +33,7 @@ import { drawTradeTabs, drawTradeOverlay } from './render-tradeui.js';
 import { createInteractSystem, addObjectSource, addProvider, onInteract, stepInteraction, defineInteractable, targetOf } from './game-interact.js';
 import { drawInteractPrompts, INTERACT_TEXT } from './render-interact.js';
 import { NODE_TEXTS, HERB_CHANCE } from './data-nodes.js';
+import { workMul } from './game-stamina.js'; // S048
 import { createNodeSystem, stepNodes, nodeInteractables, onNode, gatherView } from './game-nodes.js';
 import { SKILL_TEXTS, createSkillSystem, connectSkills, skillsOf, onSkill } from './game-skills.js';
 import { PROG_TEXTS, createProgression, connectProgression, onProgress } from './game-curve.js';
@@ -93,7 +94,7 @@ syncObjects(objects, world);
 const objSprites = createObjectSprites();
 const interact = createInteractSystem();     // S016: interakciós zóna, célpont, egy gomb; a tárgyak a forrásból jönnek
 addObjectSource(interact, objects);
-const nodes = createNodeSystem(objects, { seed: WORLD_SEED }); // S037: gyűjthető node-ok (fa, kő, gyógynövény): tartott interakció-gomb -> ütések -> drop az inventoryba, újranövés a játékidővel
+const nodes = createNodeSystem(objects, { seed: WORLD_SEED, hooks: { speed: p => workMul(typeof p === 'number' ? players[p] : p, tether.cfg.act), power: () => 1 } }); // S037: gyűjthető node-ok (fa, kő, gyógynövény): tartott interakció-gomb -> ütések -> drop az inventoryba, újranövés a játékidővel
 for (const [type, def] of Object.entries(nodeInteractables(nodes))) defineInteractable(interact, type, def); // akció: 'gather'
 const stations = createStationSystem();       // S041: felállítható craft-állomások (munkapad, kemence, főzőhely): ütköző, 'use' célpont, TAG a közelben álló játékosnak (a mentés az S050-ben)
 addProvider(interact, stationProvider(stations));
@@ -211,6 +212,7 @@ function update(dt) {
   stepTetherSystem(tether, game.players, inputs, dt);
   stepInteraction(interact, game.players, inputs, dt); // a mozgás után: a zóna a végleges pozícióhoz igazodik
   stepNodes(nodes, game.players, inputs, [targetOf(interact, 0), targetOf(interact, 1)], game.inventories, clock.t, dt); // S037: gyűjtés (a SZŰRT bemenet: nyitott menünél nincs interakció)
+  game.players.forEach((p, i) => { p.gathering = gatherView(nodes, i) != null; }); // S048: a gyűjtés a következő kockában fogyaszt staminát (tether-system)
   stepActLog(actlog, dt, [activityOf(0), activityOf(1)]); // S047: tevékenység-idő napló
   stepTetherVisual(vis, tether, dt);
   stepCamera(game.camera, game.players[0], game.players[1], dt, camCfg);

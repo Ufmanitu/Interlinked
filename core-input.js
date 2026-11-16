@@ -1,13 +1,13 @@
 // Bemenet: billentyűzet + Gamepad API, két játékos, konfigurálható kiosztás
-export const ACTIONS = ['up', 'down', 'left', 'right', 'interact', 'ability1', 'ability2', 'menu'];
+export const ACTIONS = ['up', 'down', 'left', 'right', 'interact', 'ability1', 'ability2', 'menu', 'sprint'];
 
 export const DEFAULT_KEYS = [
-  { up: 'KeyW', down: 'KeyS', left: 'KeyA', right: 'KeyD', interact: 'KeyF', ability1: 'KeyG', ability2: 'KeyH', menu: 'KeyQ' },
-  { up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight', interact: 'Comma', ability1: 'Period', ability2: 'Slash', menu: 'Semicolon' },
+  { up: 'KeyW', down: 'KeyS', left: 'KeyA', right: 'KeyD', interact: 'KeyF', ability1: 'KeyG', ability2: 'KeyH', menu: 'KeyQ', sprint: 'ShiftLeft' },
+  { up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight', interact: 'Comma', ability1: 'Period', ability2: 'Slash', menu: 'Semicolon', sprint: 'ShiftRight' },
 ];
 
 // Gamepad: gomb-index kiosztás (standard mapping)
-export const DEFAULT_PAD = { interact: 0, ability2: 1, ability1: 2, menu: 9 };
+export const DEFAULT_PAD = { interact: 0, ability2: 1, ability1: 2, menu: 9, sprint: 5 }; // S048: sprint = RB
 const DEADZONE = 0.3;
 
 export class Input {
@@ -28,8 +28,8 @@ export class Input {
   }
 
   _blank() {
-    return { x: 0, y: 0, interact: false, ability1: false, ability2: false, menu: false,
-             interactPressed: false, ability1Pressed: false, ability2Pressed: false, menuPressed: false };
+    return { x: 0, y: 0, interact: false, ability1: false, ability2: false, menu: false, sprint: false,
+             interactPressed: false, ability1Pressed: false, ability2Pressed: false, menuPressed: false, sprintPressed: false };
   }
 
   setKeys(player, map) { Object.assign(this.keys[player], map); }
@@ -45,7 +45,7 @@ export class Input {
       let x = (this.down.has(k.right) ? 1 : 0) - (this.down.has(k.left) ? 1 : 0);
       let y = (this.down.has(k.down) ? 1 : 0) - (this.down.has(k.up) ? 1 : 0);
       const btn = { interact: this.down.has(k.interact), ability1: this.down.has(k.ability1),
-                    ability2: this.down.has(k.ability2), menu: this.down.has(k.menu) };
+                    ability2: this.down.has(k.ability2), menu: this.down.has(k.menu), sprint: this.down.has(k.sprint) };
       const gp = pads[p];
       if (gp) {
         let ax = gp.axes[0] || 0, ay = gp.axes[1] || 0;
@@ -56,12 +56,12 @@ export class Input {
         if (b(12)) ay = -1; if (b(13)) ay = 1;
         if (ax !== 0) x = ax;
         if (ay !== 0) y = ay;
-        for (const a of ['interact', 'ability1', 'ability2', 'menu']) btn[a] = btn[a] || b(this.pad[a]);
+        for (const a of ['interact', 'ability1', 'ability2', 'menu', 'sprint']) btn[a] = btn[a] || b(this.pad[a]);
       }
       const len = Math.hypot(x, y);
       if (len > 1) { x /= len; y /= len; }
       st.x = x; st.y = y;
-      for (const a of ['interact', 'ability1', 'ability2', 'menu']) {
+      for (const a of ['interact', 'ability1', 'ability2', 'menu', 'sprint']) {
         st[a] = btn[a];
         st[a + 'Pressed'] = btn[a] && !this.prev[p][a];
       }

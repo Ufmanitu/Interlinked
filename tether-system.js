@@ -5,6 +5,8 @@ import { CAM_VIEW, CAM_CONFIG } from './game-camera.js';
 import { computeTether } from './tether-logic.js';
 import { desiredVelocity, applyVelocity } from './game-player.js';
 import { moveWithWalls, sweepAxis } from './game-collision.js';
+import { ensureStamina, stepStamina, canSprint, wantsSprint, STAMINA_ACT } from './game-stamina.js'; // S048: a stamina egyetlen helyen lép (húzás + sprint + gyűjtés)
+export { ensureStamina };
 
 // k-hook tényezők (placeholder, az S011 playteszt hangolja). Egységek: 1 = átlagos erő / átlagos test.
 // strengthRef: a referencia-erő; weightRef: a referencia-súly (test + teher); weightMin/Max: a súly-szorzó határai;
@@ -33,6 +35,7 @@ export const TETHER_CONFIG = {
   pullStamina: false,
   khook: K_HOOK,
   stamina: PULL_STAMINA,
+  act: STAMINA_ACT, // S048: sprint/gyűjtés költség, sprint-szorzó, munka-lassulás (hangolás: S188)
   reel: REEL_CONFIG,
 };
 
@@ -59,25 +62,9 @@ export function applyKHook(base, players, cfg = TETHER_CONFIG, staminaOn = false
   return { a: clamp01(base.a * f(a, b)), b: clamp01(base.b * f(b, a)) };
 }
 
-// Stamina-mezők a játékoson (p.stamina, p.staminaMax, p.exhausted), hiányzó/rossz érték -> teli.
-export function ensureStamina(p, cfg = PULL_STAMINA) {
-  if (!Number.isFinite(p.staminaMax) || p.staminaMax <= 0) p.staminaMax = cfg.max;
-  if (!Number.isFinite(p.stamina)) p.stamina = p.staminaMax;
-  p.stamina = Math.min(p.staminaMax, Math.max(0, p.stamina));
-  p.exhausted = !!p.exhausted;
-}
-
-// Egy lépés: a húzó (mode: pull-a/pull-b valamelyik tengelyen) fogyaszt, a többiek regenerálnak.
-// enabled=false: nincs költség, mindenki regenerál (a kimerültség is megszűnik).
+// Régi API (S010): csak a húzás-költség; az S048-tól a game-stamina.stepStamina vékony burkolója (azonos viselkedés).
 export function stepPullStamina(players, mode, dt, enabled, cfg = PULL_STAMINA) {
-  players.forEach((p, i) => {
-    ensureStamina(p, cfg);
-    const id = i === 0 ? 'a' : 'b';
-    const pulling = !!enabled && (mode.x === 'pull-' + id || mode.y === 'pull-' + id);
-    if (dt > 0) p.stamina = pulling ? Math.max(0, p.stamina - cfg.cost * dt) : Math.min(p.staminaMax, p.stamina + cfg.regen * dt);
-    if (pulling && p.stamina <= 0) p.exhausted = true;
-    else if (p.exhausted && p.stamina >= cfg.resume * p.staminaMax) p.exhausted = false;
-  });
+  stepStamina(players, mode, null, dt, enabled, cfg, STAMINA_ACT);
 }
 
 const snap = p => ({ value: p.stamina, max: p.staminaMax, exhausted: p.exhausted });
@@ -92,6 +79,7 @@ export function createTetherSystem(cfg = {}) {
     mode: { x: 'free', y: 'free' },         // free | hold | pull-a | pull-b
     k: { a: 0, b: 0 },                      // az utolsó lépés tényleges k-ja (k-hook után; a / b húzásakor)
     stamina: { a: full(), b: full() },      // az utolsó lépés húzás-staminája játékosonként (HUD)
+    sprint: [false, false],                 // az utolsó lépésben sprintelt-e (A, B)
     blocked: { a: { x: false, y: false }, b: { x: false, y: false } }, // az utolsó lépésben a fal levágta-e a mozgást
   };
 }
@@ -140,8 +128,14 @@ export function stepTetherSystem(sys, players, inputs, dt) {
   const staminaOn = !!resolve(sys.cfg.pullStamina, players);
   ensureStamina(pa, sys.cfg.stamina); ensureStamina(pb, sys.cfg.stamina);
   const k = applyKHook(normK(resolve(sys.cfg.k, players)), players, sys.cfg, staminaOn);
+  // S048: sprint (gomb tartva + mozgás + nem kimerült): a SAJÁT sebesség szorzódik (a speedMul-lal, ideiglenesen).
+  const act = sys.cfg.act || STAMINA_ACT;
+  const sprint = players.map((p, i) => wantsSprint(inputs[i], act) && canSprint(p));
+  const savedMul = players.map(p => p.speedMul);
+  players.forEach((p, i) => { if (sprint[i]) p.speedMul = num(p.speedMul, 1) * act.sprintMul; });
   const va = desiredVelocity(pa, inputs[0] || {});
   const vb = desiredVelocity(pb, inputs[1] || {});
+  players.forEach((p, i) => { if (savedMul[i] === undefined) delete p.speedMul; else p.speedMul = savedMul[i]; p.sprinting = sprint[i]; });
   const t = computeTether({ a: pa, b: pb, va, vb, L, k, dt });
   const walls = sys.cfg.walls;
   if (walls && walls.length && dt > 0) {
@@ -155,7 +149,8 @@ export function stepTetherSystem(sys, players, inputs, dt) {
     sys.blocked = { a: { x: false, y: false }, b: { x: false, y: false } };
   }
   reelIn(pa, pb, L, dt, walls, sys.cfg.reel);
-  stepPullStamina(players, t.mode, dt, staminaOn, sys.cfg.stamina);
+  stepStamina(players, t.mode, { sprint, gather: players.map(p => !!p.gathering) }, dt, staminaOn, sys.cfg.stamina, act); // p.gathering: a main.js állítja a gyűjtés után
+  sys.sprint = sprint;
   sys.L = L;
   sys.k = k;
   sys.stamina = { a: snap(pa), b: snap(pb) };
