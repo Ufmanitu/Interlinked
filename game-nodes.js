@@ -2,16 +2,20 @@
 // A node egy világ-objektum (fa, kő, gyógynövény) gyűjthető tulajdonságokkal (data-nodes.js). A gyűjtés: az interakció gombot TARTANI kell a
 // célpont előtt; minden `time` mp egy ütés (hp csökken), hp 0-nál a drop-tábla gurul, a tárgyak az inventoryba kerülnek, az objektum eltűnik
 // (world-objects removeObject), és `regrow` játékperc múlva visszanő. Tele inventorynál semmi nem vész el: a node megmarad, 'full' esemény.
+// S038: a node `tool` tag-je szerint az inventoryban lévő LEGJOBB eszköz (tier, majd sebesség) gyorsít és erősít; a `minTier`-nél gyengébb
+// (vagy hiányzó) eszköznél a gyűjtés zárt: 'locked' esemény (egyszer nyomásonként), nincs ütés, nincs sérülés.
 import { mulberry32 } from './world-noise.js';
 import { addItem, inventoryState, restoreInventory } from './game-inventory.js';
 import { OBJECT_DEFS, removeObject, restoreObject } from './world-objects.js';
 import { NODE_DEFS } from './data-nodes.js';
+import { getItemDef, ITEM_LIMITS } from './data-items.js';
 
-export const NODE_LIMITS = { maxHp: 99, minTime: 0.05, maxTime: 60, maxRegrow: 1e6, maxHeal: 3600, maxDrops: 8, maxCount: 999, maxDepleted: 100000 };
+export const NODE_LIMITS = { maxHp: 99, minTime: 0.05, maxTime: 60, maxRegrow: 1e6, maxHeal: 3600, maxDrops: 8, maxCount: 999, maxDepleted: 100000, maxTier: ITEM_LIMITS.maxTier, maxTagLen: 24 };
 export const NODE_CONFIG = { maxHitsPerStep: 8, fullFlash: 0.8, maxSpeed: 20, maxPower: 99, action: 'gather' };
 export const NODE_STATE_VERSION = 1;
 
 const ID_RE = /^-?\d+,-?\d+:\d+$/;
+const TAG_RE = /^[A-Z0-9_ÁÉÍÓÖŐÚÜŰ]+$/;
 const isNum = v => typeof v === 'number' && Number.isFinite(v);
 
 /** Egy node-definíció ellenőrzése -> {ok, node (fagyasztott)|null, error}; sosem dob. A típus létező objektum-típus kell legyen. */
@@ -25,6 +29,10 @@ export function validateNodeDef(def) {
   if (!isNum(def.regrow) || def.regrow <= 0 || def.regrow > L.maxRegrow) return bad(type + ':regrow');
   const heal = def.heal === undefined ? 0 : def.heal;
   if (!isNum(heal) || heal < 0 || heal > L.maxHeal) return bad(type + ':heal');
+  const tool = def.tool === undefined || def.tool === null ? null : def.tool;
+  if (tool !== null && (typeof tool !== 'string' || tool.length > L.maxTagLen || !TAG_RE.test(tool))) return bad(type + ':tool');
+  const minTier = def.minTier === undefined ? 0 : def.minTier;
+  if (!Number.isInteger(minTier) || minTier < 0 || minTier > L.maxTier || (minTier > 0 && tool === null)) return bad(type + ':minTier');
   if (!Array.isArray(def.drops) || def.drops.length > L.maxDrops) return bad(type + ':drops');
   const drops = [];
   for (const d of def.drops) {
@@ -34,7 +42,7 @@ export function validateNodeDef(def) {
     if (!isNum(chance) || chance < 0 || chance > 1) return bad(type + ':drop.chance');
     drops.push(Object.freeze({ item: d.item, min, max, chance }));
   }
-  return { ok: true, error: null, node: Object.freeze({ type, hp: def.hp, time: def.time, regrow: def.regrow, heal, drops: Object.freeze(drops), nameKey: OBJECT_DEFS[type].nameKey }) };
+  return { ok: true, error: null, node: Object.freeze({ type, hp: def.hp, time: def.time, regrow: def.regrow, heal, tool, minTier, drops: Object.freeze(drops), nameKey: OBJECT_DEFS[type].nameKey }) };
 }
 
 /** Nyilvántartás: típus -> node. Hibás kiesik (errors), duplikátum felülír (dups). */
@@ -75,7 +83,22 @@ export function rollDrops(node, seed, id, count = 0) {
   return [...sum].map(([item, n]) => ({ item, n }));
 }
 
-const newSession = () => ({ id: null, ref: null, progress: 0, full: 0 });
+const newSession = () => ({ id: null, ref: null, progress: 0, full: 0, lock: 0, blocked: false });
+
+/**
+ * A legjobb eszköz az inventoryban a tag-hez (tier, majd sebesség, majd erő szerint) -> {id, tag, tier, speed, power} | null.
+ * Az eszköz nem kell, hogy "kézben" legyen: ha az inventoryban van, számít. Hibás inventory / tag -> null (kézzel).
+ */
+export function bestTool(inv, tag) {
+  if (!inv || !Array.isArray(inv.slots) || !inv.reg || typeof tag !== 'string') return null;
+  let best = null;
+  for (const s of inv.slots) {
+    const d = s ? getItemDef(inv.reg, s.id) : null, t = d && d.tool;
+    if (!t || t.tag !== tag) continue;
+    if (!best || t.tier > best.tier || (t.tier === best.tier && (t.speed > best.speed || (t.speed === best.speed && t.power > best.power)))) best = { id: d.id, tag: t.tag, tier: t.tier, speed: t.speed, power: t.power };
+  }
+  return best;
+}
 
 /**
  * Node-rendszer az objektum-tárhoz. opts: {defs|reg, seed, hooks:{speed(p,node,ref)->szorzó, power(p,node,ref)->ütés-erő}} (az S038 eszközei ide kötnek).
@@ -88,11 +111,11 @@ export function createNodeSystem(os, opts = {}) {
     damage: new Map(),    // id -> {type, hp (hátralévő), age (mp az utolsó ütés óta)} – nem mentett
     harvests: new Map(),  // id -> eddigi kitermelések (a drop-RNG-hez; nem mentett)
     players: [newSession(), newSession()], events: [], listeners: [],
-    stats: { hits: 0, harvested: 0, regrown: 0, full: 0 }, lastError: null,
+    stats: { hits: 0, harvested: 0, regrown: 0, full: 0, locked: 0 }, lastError: null,
   };
 }
 
-/** Eseményfigyelő (hang, XP, UI): ev {type 'hit'|'depleted'|'full'|'regrown', player?, id, nodeType, ...}; visszaad egy leiratkozót. */
+/** Eseményfigyelő (hang, XP, UI): ev {type 'hit'|'depleted'|'full'|'locked'|'regrown', player?, id, nodeType, tool? (az eszköz tárgy-id-je|null), ...}; visszaad egy leiratkozót. */
 export function onNode(ns, fn) {
   if (typeof fn !== 'function') return () => {};
   ns.listeners.push(fn);
@@ -122,7 +145,7 @@ function hook(fn, p, node, ref, lo, hi, dflt, whole) {
   return whole ? Math.max(lo, Math.floor(v)) : v;
 }
 
-function harvest(ns, i, node, ref, inv, now) {
+function harvest(ns, i, node, ref, inv, now, toolId) {
   const count = ns.harvests.get(ref.id) || 0;
   const drops = rollDrops(node, ns.seed, ref.id, count);
   if (inv) {
@@ -136,7 +159,7 @@ function harvest(ns, i, node, ref, inv, now) {
   ns.damage.delete(ref.id);
   ns.harvests.set(ref.id, count + 1);
   ns.stats.harvested++;
-  emit(ns, { type: 'depleted', player: i, id: ref.id, nodeType: node.type, x: ref.x, y: ref.y, drops });
+  emit(ns, { type: 'depleted', player: i, id: ref.id, nodeType: node.type, x: ref.x, y: ref.y, drops, tool: toolId });
   return true;
 }
 
@@ -164,25 +187,36 @@ export function stepNodes(ns, players, inputs, targets, inventories, now, dt) {
   }
   for (let i = 0; i < 2; i++) {
     const sess = ns.players[i];
-    sess.full = Math.max(0, sess.full - step);
+    sess.full = Math.max(0, sess.full - step); sess.lock = Math.max(0, sess.lock - step);
     const p = players && players[i], inp = inputs && inputs[i], tg = targets && targets[i];
     const ref = tg && tg.kind === 'object' && tg.action === NODE_CONFIG.action ? tg.ref : null;
     const node = ref && ref.id != null ? ns.reg.nodes.get(ref.type) : null;
-    if (!(inp && inp.interact) || !node || ns.depleted.has(ref.id)) { sess.id = null; sess.ref = null; sess.progress = 0; continue; }
-    if (sess.id !== ref.id) { sess.id = ref.id; sess.ref = ref; sess.progress = 0; }
+    if (!(inp && inp.interact) || !node || ns.depleted.has(ref.id)) { sess.id = null; sess.ref = null; sess.progress = 0; sess.blocked = false; continue; }
+    if (sess.id !== ref.id) { sess.id = ref.id; sess.ref = ref; sess.progress = 0; sess.blocked = false; }
+    const inv = inventories && inventories[i], tool = bestTool(inv, node.tool);
+    if ((tool ? tool.tier : 0) < node.minTier) { // S038: eszköz-követelmény – zárt, nincs ütés (az egyszeri jelzés nyomásonként)
+      if (!sess.blocked) {
+        sess.blocked = true; ns.stats.locked++;
+        emit(ns, { type: 'locked', player: i, id: ref.id, nodeType: node.type, need: { tag: node.tool, tier: node.minTier }, have: tool ? tool.tier : 0 });
+      }
+      sess.lock = NODE_CONFIG.fullFlash; sess.progress = 0;
+      continue;
+    }
+    sess.blocked = false;
     const dm = ns.damage.get(ref.id);
     if (dm) dm.age = 0;
-    sess.progress += step * hook(ns.hooks.speed, p, node, ref, 0.05, NODE_CONFIG.maxSpeed, 1, false) / node.time;
+    const toolId = tool ? tool.id : null;
+    sess.progress += step * Math.min(NODE_CONFIG.maxSpeed, (tool ? tool.speed : 1) * hook(ns.hooks.speed, p, node, ref, 0.05, NODE_CONFIG.maxSpeed, 1, false)) / node.time;
     for (let g = 0; sess.progress >= 1 && g < NODE_CONFIG.maxHitsPerStep; g++) {
       sess.progress -= 1;
       const cur = ns.damage.get(ref.id) || { type: node.type, hp: node.hp, age: 0 };
       ns.damage.set(ref.id, cur);
-      cur.hp -= hook(ns.hooks.power, p, node, ref, 1, NODE_CONFIG.maxPower, 1, true);
+      cur.hp -= Math.min(NODE_CONFIG.maxPower, (tool ? tool.power : 1) * hook(ns.hooks.power, p, node, ref, 1, NODE_CONFIG.maxPower, 1, true));
       cur.age = 0;
       ns.stats.hits++;
-      emit(ns, { type: 'hit', player: i, id: ref.id, nodeType: node.type, hp: Math.max(0, cur.hp), max: node.hp });
+      emit(ns, { type: 'hit', player: i, id: ref.id, nodeType: node.type, hp: Math.max(0, cur.hp), max: node.hp, tool: toolId });
       if (cur.hp > 0) continue;
-      if (harvest(ns, i, node, ref, inventories && inventories[i], isNum(now) ? now : 0)) { sess.id = null; sess.ref = null; sess.progress = 0; break; }
+      if (harvest(ns, i, node, ref, inv, isNum(now) ? now : 0, toolId)) { sess.id = null; sess.ref = null; sess.progress = 0; break; }
       cur.hp = 1; sess.progress = 0; sess.full = NODE_CONFIG.fullFlash; ns.stats.full++; // nincs hely: az utolsó ütés vár
       emit(ns, { type: 'full', player: i, id: ref.id, nodeType: node.type });
       break;
@@ -192,7 +226,7 @@ export function stepNodes(ns, players, inputs, targets, inventories, now, dt) {
   return ns.events;
 }
 
-/** A rajzhoz: a játékos aktív gyűjtése -> {ref, ratio 0..1 (a teljes kitermelés felé), full (az inventory tele villan)} | null. */
+/** A rajzhoz: a játékos aktív gyűjtése -> {ref, ratio 0..1 (a teljes kitermelés felé), full (az inventory tele VAGY az eszköz hiányzik: villan), locked (csak az eszköz-hiány)} | null. */
 export function gatherView(ns, i) {
   const s = ns.players[i];
   if (!s || !s.ref) return null;
@@ -200,7 +234,7 @@ export function gatherView(ns, i) {
   if (!node) return null;
   const dm = ns.damage.get(s.ref.id);
   const done = node.hp - (dm ? Math.max(0, dm.hp) : node.hp);
-  return { ref: s.ref, ratio: Math.min(1, Math.max(0, (done + Math.min(1, s.progress)) / node.hp)), full: s.full > 0 };
+  return { ref: s.ref, ratio: Math.min(1, Math.max(0, (done + Math.min(1, s.progress)) / node.hp)), full: s.full > 0 || s.lock > 0, locked: s.lock > 0 };
 }
 
 /** Mentés-alak (az S050 köti be): {v:1, depleted:[[id, típus, hátralévő játékperc]]}; a részleges sérülés nem mentett. */

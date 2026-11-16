@@ -2,8 +2,10 @@
 // Új tárgy: egyedi id (kisbetű/szám/_), stack (1..9999), weight (kg, >= 0), value (alap-ár, >= 0), tags (nagybetűs tag-ek:
 // a képesség-tag akadályok és receptek ezekre hivatkoznak: pl. FÁKLYA, FEJSZE). A név kulcsa: 'item.<id>' (ITEM_TEXTS, prefix 'item.').
 // Szöveg-regisztráció: registerTexts(ITEM_TEXTS, ITEM_TEXT_PREFIX) (a main.js az S035-ben köti be). Az S034 a súlyt (kg) a póráz-teherré alakítja.
+// Eszköz (S038): opcionális tool {tag (pl. FEJSZE), tier (egész 1..9), speed (gyűjtési sebesség-szorzó, 0.05..20), power (ütésenkénti hp-levonás, egész 1..99)};
+// a tool.tag automatikusan a tárgy tag-jei közé kerül. Az eszköz az inventoryban LEVÉVE is hat (a legjobb számít); kézzel: tier 0, speed 1, power 1.
 export const ITEM_TEXT_PREFIX = 'item.';
-export const ITEM_LIMITS = { maxStack: 9999, maxTags: 8, maxItems: 2048, maxWeight: 100000, maxValue: 1e9 };
+export const ITEM_LIMITS = { maxStack: 9999, maxTags: 8, maxItems: 2048, maxWeight: 100000, maxValue: 1e9, maxTier: 9, minToolSpeed: 0.05, maxToolSpeed: 20, maxToolPower: 99 };
 
 export const ITEM_DEFS = [
   { id: 'wood',   stack: 99, weight: 2,    value: 2,  tags: ['MATERIAL', 'FUEL'] },
@@ -12,11 +14,15 @@ export const ITEM_DEFS = [
   { id: 'herb',   stack: 50, weight: 0.1,  value: 3,  tags: ['HERB'] },
   { id: 'torch',  stack: 20, weight: 0.5,  value: 6,  tags: ['FÁKLYA', 'FUEL'] },
   { id: 'shard',  stack: 1,  weight: 1,    value: 80, tags: ['SORSSZILÁNK'] },
+  // S038 alap-eszközök (tier 1; a magasabb tier-ek a régiókkal jönnek: S119, S129, S139...). Kézzel egy fa 2,7 mp, fejszével ~1,1 mp.
+  { id: 'axe',     stack: 1, weight: 2.5, value: 12, tags: ['ESZKÖZ'], tool: { tag: 'FEJSZE',  tier: 1, speed: 2.5, power: 1 } },
+  { id: 'pickaxe', stack: 1, weight: 3,   value: 14, tags: ['ESZKÖZ'], tool: { tag: 'CSÁKÁNY', tier: 1, speed: 2.5, power: 1 } },
+  { id: 'sickle',  stack: 1, weight: 0.8, value: 8,  tags: ['ESZKÖZ'], tool: { tag: 'SARLÓ',   tier: 1, speed: 2.5, power: 1 } },
 ];
 
 export const ITEM_TEXTS = {
-  hu: { wood: 'Fa', stone: 'Kő', fiber: 'Rost', herb: 'Gyógynövény', torch: 'Fáklya', shard: 'Sorsszilánk' },
-  en: { wood: 'Wood', stone: 'Stone', fiber: 'Fiber', herb: 'Herb', torch: 'Torch', shard: 'Fate Shard' },
+  hu: { wood: 'Fa', stone: 'Kő', fiber: 'Rost', herb: 'Gyógynövény', torch: 'Fáklya', shard: 'Sorsszilánk', axe: 'Fejsze', pickaxe: 'Csákány', sickle: 'Sarló' },
+  en: { wood: 'Wood', stone: 'Stone', fiber: 'Fiber', herb: 'Herb', torch: 'Torch', shard: 'Fate Shard', axe: 'Axe', pickaxe: 'Pickaxe', sickle: 'Sickle' },
 };
 
 const ID_RE = /^[a-z][a-z0-9_]*$/;
@@ -41,7 +47,18 @@ export function validateItemDef(def) {
       if (!tags.includes(tg)) tags.push(tg);
     }
   }
-  const item = Object.freeze({ id, nameKey: ITEM_TEXT_PREFIX + id, stack, weight, value, tags: Object.freeze(tags) });
+  let tool = null;
+  if (def.tool !== undefined && def.tool !== null) {
+    const t = def.tool, L = ITEM_LIMITS;
+    if (typeof t !== 'object' || typeof t.tag !== 'string' || t.tag.length > 24 || !TAG_RE.test(t.tag)) return { ok: false, item: null, error: id + ':tool' };
+    if (!Number.isInteger(t.tier) || t.tier < 1 || t.tier > L.maxTier) return { ok: false, item: null, error: id + ':tool' };
+    if (typeof t.speed !== 'number' || !Number.isFinite(t.speed) || t.speed < L.minToolSpeed || t.speed > L.maxToolSpeed) return { ok: false, item: null, error: id + ':tool' };
+    if (!Number.isInteger(t.power) || t.power < 1 || t.power > L.maxToolPower) return { ok: false, item: null, error: id + ':tool' };
+    tool = Object.freeze({ tag: t.tag, tier: t.tier, speed: t.speed, power: t.power });
+    if (!tags.includes(t.tag)) tags.push(t.tag);
+    if (tags.length > ITEM_LIMITS.maxTags) return { ok: false, item: null, error: id + ':tags' };
+  }
+  const item = Object.freeze({ id, nameKey: ITEM_TEXT_PREFIX + id, stack, weight, value, tags: Object.freeze(tags), tool });
   return { ok: true, item, error: null };
 }
 

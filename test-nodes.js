@@ -1,16 +1,16 @@
 // test-nodes.js (S037) – erőforrás-node-ok: adat, drop-gurítás, gyűjtés, tele inventory, újranövés, gyógyulás, két játékos, hookok,
-// mentés-alak, objektum-kivétel (world-objects), interakció-integráció, rajz, 600+ kockás smoke. Tiszta logika, Node-ban fut.
-import { test, assert, eq } from './test-index.js';
+// mentés-alak, objektum-kivétel (world-objects), interakció-integráció, rajz, 600+ kockás smoke; S038: eszközök (adat, bestTool, sebesség/erő, minTier-zár). Tiszta logika, Node-ban fut.
+import { test, assert, eq, near } from './test-index.js';
 import { createWorldStream, warmStream } from './world-stream.js';
 import { createObjectStore, syncObjects, objectColliders, objectCount, removeObject, restoreObject, scatterChunkObjects } from './world-objects.js';
-import { createItemRegistry } from './data-items.js';
+import { createItemRegistry, validateItemDef, ITEM_DEFS, ITEM_TEXTS } from './data-items.js';
 import { createPlayerInventories, countItem, addItem, removeItem, inventoryState } from './game-inventory.js';
 import { createPlayer } from './game-player.js';
 import { createInteractSystem, addObjectSource, defineInteractable, stepInteraction, targetOf } from './game-interact.js';
 import { NODE_DEFS, NODE_TEXTS, HERB_CHANCE } from './data-nodes.js';
 import { drawNodeBars } from './render-objects.js';
 import {
-  validateNodeDef, createNodeRegistry, auditNodes, rollDrops, createNodeSystem, onNode, stepNodes, nodeInteractables, gatherView, nodeState, restoreNodes,
+  validateNodeDef, createNodeRegistry, auditNodes, rollDrops, createNodeSystem, onNode, stepNodes, nodeInteractables, gatherView, nodeState, restoreNodes, bestTool,
 } from './game-nodes.js';
 
 const SEED = 12014, DT = 1 / 60;
@@ -220,4 +220,94 @@ function runSmoke() {
 test('smoke: 6000 kocka két játékossal, 8 node-dal, gyorsított játékidővel – megmaradás (a drop = az inventory), invariánsok, regrow, determinizmus', () => {
   const a = runSmoke(), b = runSmoke(); eq(a.evs > 30, true, 'történt gyűjtés: ' + a.evs); assert(JSON.parse(a.stats).harvested > 2 && JSON.parse(a.stats).regrown > 0, 'volt kitermelés és újranövés: ' + a.stats);
   eq(JSON.stringify(a), JSON.stringify(b), 'ugyanaz a futás ugyanazt adja');
+});
+
+// ---- S038: gyűjtő-eszközök ----
+const TDEF = { id: 'iron_pick', stack: 1, weight: 4, value: 30, tool: { tag: 'CSÁKÁNY', tier: 2, speed: 4, power: 2 } };
+const TREG = () => createItemRegistry([...ITEM_DEFS, TDEF]);
+const kit = (...ids) => { const v = createPlayerInventories(TREG()); for (const id of ids) assert(addItem(v[0], id, 1) === 0, 'nem fért be: ' + id); return v; };
+function secs(inv, o, ns, max = 8) { // mp a kitermelésig (1/60 mp felbontás); Infinity, ha nem sikerül
+  for (let f = 1; f <= max * 60; f++) if (stepNodes(ns, undefined, [HOLD, IDLE], [tgt(o), null], inv, 0, DT).some(e => e.type === 'depleted')) return f / 60;
+  return Infinity;
+}
+
+test('eszköz-adat: alap-eszközök érvényesek (tag a tag-ek közt, fagyasztott), hibás tool/minTier kiesik, minden node-tag-hez van eszköz, szövegek', () => {
+  const reg = createItemRegistry(); eq(reg.errors.length, 0, 'hiba: ' + reg.errors);
+  for (const [id, tag] of [['axe', 'FEJSZE'], ['pickaxe', 'CSÁKÁNY'], ['sickle', 'SARLÓ']]) {
+    const it = reg.items.get(id); assert(it && it.tool && it.tool.tag === tag && it.tool.tier === 1 && it.stack === 1, id); assert(it.tags.includes(tag) && it.tags.includes('ESZKÖZ'), 'tag: ' + id);
+    assert(Object.isFrozen(it.tool) && ITEM_TEXTS.hu[id] && ITEM_TEXTS.en[id], 'fagyasztott/szöveg: ' + id);
+  }
+  assert(reg.items.get('wood').tool === null, 'nem eszköz: tool null');
+  const b = { id: 'x', stack: 1, weight: 1, value: 1 }, t = { tag: 'FEJSZE', tier: 1, speed: 2, power: 1 };
+  for (const bad of [{ ...t, tier: 0 }, { ...t, tier: 10 }, { ...t, tier: 1.5 }, { ...t, speed: 0 }, { ...t, speed: 21 }, { ...t, speed: NaN }, { ...t, power: 0 }, { ...t, power: 1.5 }, { ...t, power: 100 }, { ...t, tag: 'fejsze' }, { ...t, tag: 'A'.repeat(25) }, { ...t, tag: 5 }, 'fejsze', 7])
+    eq(validateItemDef({ ...b, tool: bad }).ok, false, 'elfogadta: ' + JSON.stringify(bad));
+  eq(validateItemDef({ ...b, tool: t, tags: ['FEJSZE', 'FEJSZE'] }).item.tags.length, 1, 'tag-duplikátum'); eq(validateItemDef({ ...b, tool: null }).ok, true);
+  eq(validateItemDef({ ...b, tool: t, tags: ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'] }).ok, false, 'tag-határ az eszköz-taggal');
+  for (const n of createNodeRegistry().nodes.values()) assert(n.tool && [...reg.items.values()].some(i => i.tool && i.tool.tag === n.tool), 'nincs eszköz a node-hoz: ' + n.type);
+  const nb = NODE_DEFS[0];
+  for (const d of [{ ...nb, tool: 'fejsze' }, { ...nb, tool: 5 }, { ...nb, minTier: -1 }, { ...nb, minTier: 10 }, { ...nb, minTier: 1.5 }, { ...nb, tool: null, minTier: 1 }, { ...nb, tool: undefined, minTier: 2 }])
+    eq(validateNodeDef(d).ok, false, 'elfogadta: ' + JSON.stringify(d));
+  const ok = validateNodeDef({ ...nb, tool: undefined, minTier: undefined }).node; eq(ok.tool, null); eq(ok.minTier, 0); eq(validateNodeDef({ ...nb, minTier: 2 }).node.minTier, 2);
+});
+
+test('bestTool: nincs/rossz tag/hibás bemenet -> null; a legjobb tier, majd sebesség; a tag-re szűr; nem módosít', () => {
+  const inv = kit('axe')[0]; eq(bestTool(inv, 'CSÁKÁNY'), null, 'rossz tag'); eq(bestTool(inv, 'FEJSZE').id, 'axe');
+  addItem(inv, 'pickaxe', 1); eq(bestTool(inv, 'CSÁKÁNY').id, 'pickaxe'); addItem(inv, 'iron_pick', 1); const b = bestTool(inv, 'CSÁKÁNY');
+  eq([b.id, b.tier, b.speed, b.power].join(), 'iron_pick,2,4,2'); eq(bestTool(inv, 'FEJSZE').id, 'axe');
+  const snap = JSON.stringify(inventoryState(inv)); bestTool(inv, 'CSÁKÁNY'); eq(JSON.stringify(inventoryState(inv)), snap, 'nem módosít');
+  for (const bad of [null, undefined, 5, {}, { slots: 'x' }, { slots: [], reg: null }]) eq(bestTool(bad, 'FEJSZE'), null);
+  for (const tag of [undefined, null, 5, {}]) eq(bestTool(inv, tag), null);
+  eq(bestTool(kit('iron_pick', 'pickaxe')[0], 'CSÁKÁNY').id, 'iron_pick', 'sorrendtől független');
+  const same = createItemRegistry([{ id: 'a', stack: 1, weight: 1, value: 1, tool: { tag: 'X', tier: 1, speed: 2, power: 1 } }, { id: 'b', stack: 1, weight: 1, value: 1, tool: { tag: 'X', tier: 1, speed: 3, power: 1 } }]);
+  const si = createPlayerInventories(same)[0]; addItem(si, 'a', 1); addItem(si, 'b', 1); eq(bestTool(si, 'X').id, 'b', 'azonos tier: a gyorsabb');
+});
+
+test('eszköz gyorsít: a fejsze ~2,5x gyorsabb a fánál, a rossz eszköz (csákány) nem; az eseményben az eszköz id-je', () => {
+  const { os } = world(0), t = all(os, 'tree'); assert(t.length >= 3, 'kell 3 fa'); const mk = () => createNodeSystem(os, { seed: SEED });
+  const hand = secs(kit(), t[0], mk()), axe = secs(kit('axe'), t[1], mk()), pick = secs(kit('pickaxe'), t[2], mk());
+  near(hand, 2.7, 0.1, 'kézzel 2,7 mp: ' + hand); near(axe, 1.08, 0.1, 'fejsze ~1,1 mp: ' + axe); assert(axe < hand / 2, 'legalább 2x gyorsabb'); near(pick, hand, 0.05, 'a csákány a fán nem segít');
+  const ns = mk(), evs = []; onNode(ns, e => evs.push(e)); secs(kit('axe'), t[1], ns);
+  eq(evs.filter(e => e.type === 'hit').length, 3); assert(evs.every(e => e.tool === 'axe'), 'az eszköz id-je az eseményben');
+  const h = mk(), e2 = []; onNode(h, e => e2.push(e)); secs(kit(), t[0], h); assert(e2.length > 0 && e2.every(e => e.tool === null), 'kézzel: tool null');
+});
+
+test('minTier-zár: eszköz nélkül/gyenge eszközzel nincs ütés és sérülés, egyszeri locked esemény nyomásonként, a nézet jelez; jó eszközzel megy (az erő is számít)', () => {
+  const { os } = world(0), st = all(os, 'stone'); assert(st.length >= 3, 'kell 3 kő');
+  const ns = createNodeSystem(os, { seed: SEED, defs: [{ ...NODE_DEFS[1], hp: 2, time: 0.5, minTier: 2 }] }), evs = []; onNode(ns, e => evs.push(e)); const inv = kit();
+  hold(ns, 2, tgt(st[0]), null, { inv }); eq(evs.filter(e => e.type === 'locked').length, 1, 'egyszeri jelzés'); const lk = evs.find(e => e.type === 'locked');
+  eq([lk.need.tag, lk.need.tier, lk.have].join(), 'CSÁKÁNY,2,0'); eq(ns.stats.hits, 0); eq(ns.damage.size, 0);
+  const gv = gatherView(ns, 0); assert(gv && gv.locked && gv.full, 'locked + villan'); eq(gv.ratio, 0);
+  hold(ns, 1, null, null, { inv }); eq(gatherView(ns, 0), null, 'elengedve nincs nézet'); hold(ns, 0.1, tgt(st[0]), null, { inv }); eq(ns.stats.locked, 2, 'új nyomás: új jelzés');
+  addItem(inv[0], 'pickaxe', 1); hold(ns, 1, tgt(st[0]), null, { inv }); eq(ns.stats.hits, 0, 'tier 1 < 2: zárt'); eq(ns.stats.locked, 2, 'ugyanazon nyomás alatt nincs újabb jelzés');
+  addItem(inv[0], 'iron_pick', 1); hold(ns, 0.25, tgt(st[0]), null, { inv }); // a nyomás közben kapott eszköz azonnal hat
+  eq(ns.stats.hits, 1, 'tier 2, erő 2 = egy ütés a hp 2-re'); assert(evs.some(e => e.type === 'depleted' && e.tool === 'iron_pick'), 'vascsákánnyal'); assert(countItem(inv[0], 'stone') >= 2, 'drop az inventoryban');
+  hold(ns, 0.1, tgt(st[1]), tgt(st[2]), { inv: [inv[0], kit()[0]], hold1: true }); eq(ns.stats.locked, 3, 'csak az eszköz nélküli játékos zárt');
+  assert(!has(os, st[0].id), 'a kitermelt kő eltűnt'); assert(has(os, st[2].id), 'a zárt kő megvan');
+});
+
+test('eszköz + hook: a sebesség/erő szorzódik, a határok érvényesek, hibás hook nem dönt; inventory nélkül kézzel megy', () => {
+  const { os } = world(0), t = all(os, 'tree'), run = (hooks, o) => secs(kit('axe'), o, createNodeSystem(os, { seed: SEED, hooks })), base = run({}, t[0]);
+  near(run({ speed: () => 2 }, t[1]), base / 2, 0.06, 'hook x2 a fejszére szorozva'); assert(run({ speed: () => 1e9 }, t[2]) < base / 5, 'maxSpeed határ');
+  near(run({ speed: () => { throw new Error('x'); } }, t[3]), base, 0.06, 'dobó hook: alapérték'); near(run({ speed: () => NaN }, t[4]), base, 0.06, 'NaN hook: alapérték');
+  const ns = createNodeSystem(os, { seed: SEED, hooks: { power: () => 3 } }), evs = []; onNode(ns, e => evs.push(e)); secs(kit('axe'), t[5], ns);
+  eq(evs.filter(e => e.type === 'hit').length, 1, 'erő 3 x 1 = egy ütés a hp 3-ra');
+  const n2 = createNodeSystem(os, { seed: SEED, hooks: { power: () => 99 } }), e2 = []; onNode(n2, e => e2.push(e)); secs(kit('iron_pick'), all(os, 'stone')[0], n2);
+  assert(e2.some(e => e.type === 'hit' && e.hp === 0), 'a túlerő hp-ja nem negatív'); const noInv = createNodeSystem(os, { seed: SEED }); let done = false;
+  for (let f = 0; f < 600 && !done; f++) done = stepNodes(noInv, undefined, [HOLD, IDLE], [tgt(t[6]), null], undefined, 0, DT).some(e => e.type === 'depleted'); assert(done, 'inventory nélkül kézzel kitermelhető');
+});
+
+test('smoke: 3000 kocka két játékossal és eszközökkel – nincs NaN, a session/sérülés határon belül, zár és kitermelés is történik, determinista', () => {
+  const run = () => {
+    const { os } = world(0.01), inv = kit('axe', 'iron_pick'), ns = createNodeSystem(os, { seed: SEED, defs: [NODE_DEFS[0], { ...NODE_DEFS[1], minTier: 2 }, { ...NODE_DEFS[2], minTier: 1 }] });
+    const objs = [...all(os, 'tree').slice(0, 3), ...all(os, 'stone').slice(0, 3), ...all(os, 'herb').slice(0, 2)]; let sig = 0;
+    for (let f = 0; f < 3000; f++) {
+      const a = objs[(f >> 5) % objs.length], b = objs[(f >> 6) % objs.length];
+      for (const e of stepNodes(ns, undefined, [{ interact: (f >> 3) % 5 !== 0 }, { interact: (f >> 4) % 3 !== 0 }], [tgt(a), tgt(b)], inv, f * 5, DT)) sig = (sig * 31 + e.type.length + (e.hp || 0)) >>> 0;
+      for (const s of ns.players) assert(Number.isFinite(s.progress) && s.progress >= 0 && s.progress <= 1 + 1e-9 && s.lock >= 0 && s.full >= 0, 'session');
+      for (const d of ns.damage.values()) assert(Number.isFinite(d.hp) && d.hp >= -99 && d.age >= 0, 'sérülés');
+    }
+    assert(ns.stats.locked > 0 && ns.stats.hits > 0 && ns.stats.harvested > 0, 'zár, ütés és kitermelés is volt: ' + JSON.stringify(ns.stats));
+    return JSON.stringify([ns.stats, sig, inventoryState(inv[0]), inventoryState(inv[1])]);
+  };
+  eq(run(), run(), 'determinista');
 });
