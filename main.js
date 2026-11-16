@@ -34,6 +34,7 @@ import { createInteractSystem, addObjectSource, addProvider, onInteract, stepInt
 import { drawInteractPrompts, INTERACT_TEXT } from './render-interact.js';
 import { NODE_TEXTS, HERB_CHANCE } from './data-nodes.js';
 import { createNodeSystem, stepNodes, nodeInteractables } from './game-nodes.js';
+import { SKILL_TEXTS, createSkillSystem, connectSkills, skillsOf } from './game-skills.js';
 import { createWarpSystem, warpProvider, warpColliders, handleWarpEvent, stepWarp, streamPoints, warpWhere } from './world-warp.js';
 import { visibleHouses, drawHouse, drawPockets } from './render-warp.js';
 import { createGameClock, stepClock, clockInfo, bindClockKeys } from './game-clock.js';
@@ -55,6 +56,7 @@ registerTexts(WALLET_TEXTS, 'wallet.');       // S036: pénz-szövegek (wallet.*
 registerTexts(STATION_TEXTS, '');             // S041: obj.<állomás>, act.use
 registerTexts(NODE_TEXTS, '');                // S037: obj.herb, act.gather
 registerTexts(CRAFTUI_TEXTS, 'craft.');       // S042: craft UI szövegek (craft.*)
+registerTexts(SKILL_TEXTS, 'skill.');         // S045: skill-nevek, szintlépés-szöveg (skill.*)
 registerTexts(TRADEUI_TEXTS, 'trade.');       // S044: trade UI szövegek (trade.*)
 for (const l of ['hu', 'en']) for (const k of Object.keys(STATION_TEXTS[l])) if (k.startsWith('act.')) INTERACT_TEXT[l][k] = STATION_TEXTS[l][k];
 for (const l of ['hu', 'en']) for (const k of Object.keys(NODE_TEXTS[l])) if (k.startsWith('act.')) INTERACT_TEXT[l][k] = NODE_TEXTS[l][k]; // a prompt még az ideiglenes INTERACT_TEXT-ből olvas
@@ -97,8 +99,10 @@ const recipes = createRecipeRegistry(RECIPE_DEFS, inventories[0].reg); // S041: 
 // Lista: kézzel craftolható + a közeli állomások (stationCtx) receptjei; az állomás neve az 'obj.<id>' szövegből.
 const stationTagKeys = new Map();
 if (stations.reg && stations.reg.stations) for (const d of stations.reg.stations.values()) stationTagKeys.set(d.tag, 'obj.' + d.id);
-const craftUi = createCraftUi({ recipes, ctxOf: i => stationCtx(stations, players[i]), tagKey: tag => stationTagKeys.get(tag) || null });
+const skills = createSkillSystem();           // S045: skillek (használattal nőnek): a gyűjtés és a craft XP-t ad (mentés az S050-ben)
+const craftUi = createCraftUi({ recipes, ctxOf: i => stationCtx(stations, players[i], skillsOf(skills, i)), tagKey: tag => stationTagKeys.get(tag) || null });
 onInteract(interact, ev => { if (ev.kind === 'station' && ev.action === 'use') requestCraftOpen(craftUi, ev.player); });
+connectSkills(skills, { nodes, craftUi, recipes }); // S045: XP-busz (node 'depleted' + craft UI 'craft')
 // S044: trade UI = a menü 3. füle (menü gomb: inventory -> craft -> trade -> zár); a kérés a társ 2. képességével utasítható el; nyitott trade-ben két kurzor.
 const trade = createTrade();
 const tradeUi = createTradeUi();
@@ -148,7 +152,7 @@ bindTetherConfigKeys(tc);
 snapSplitView(split, players, tc.lNormal()); // induláskor az összeolvadás állapota a játékosok távolságából
 bindLangKeys(i18n, window);                    // S019: F8 = nyelvváltás HU/EN (az S107 menü átveszi)
 const vis = createTetherVisual();              // a fonal megjelenített állapota; vis.on(fn): szint-események (hanghoz)
-const game = { craftUi, tradeUi, trade, stations, time: 0, ticks: 0, fps: 0, players, inventories, wallets, ground, camera, split, tether, walls, world, objects, interact, warp, clock, field, sorsko, menus, invUi, nodes };
+const game = { skills, craftUi, tradeUi, trade, stations, time: 0, ticks: 0, fps: 0, players, inventories, wallets, ground, camera, split, tether, walls, world, objects, interact, warp, clock, field, sorsko, menus, invUi, nodes };
 // S032: mentés (F2 mentés, F3 betöltés, F4 export vágólapra, F7 import beillesztéssel; az S049 menü átveszi). A mentett állapot: játékos-pozíciók, seed, GameClock, Sorskő-szint.
 function afterLoad() {
   camera.x = (players[0].x + players[1].x) / 2; // a kamera, a nézetek és a chunkok a betöltött helyhez ugranak
@@ -320,4 +324,4 @@ function frame(now) {
 }
 requestAnimationFrame(frame);
 
-window.__game = { craftUi, tradeUi, trade, stations, craft: (i, id, n = 1) => craft(inventories[i], getRecipe(recipes, id), stationCtx(stations, players[i]), n), game, split, splitRend, input, screen, tether, tc, vis, world, atlas, chunkRend, objects, objSprites, interact, warp, clock, dn, field, sorsko, menus, saveCtl, invUi, inventories, wallets, nodes, ground, drop: (i, id, n = 1) => dropItem(ground, id, n, players[i].x + 48, players[i].y, { toss: true }), give: (i, id, n = 1) => addItem(inventories[i], id, n), pay: (i, n = 1) => deposit(wallets[i], n) }; // give: fejlesztői segéd (a node-ok S037-ben bekötve; a földre dobott tárgy felvétele az S039-ben jön)
+window.__game = { skills, craftUi, tradeUi, trade, stations, craft: (i, id, n = 1) => craft(inventories[i], getRecipe(recipes, id), stationCtx(stations, players[i], skillsOf(skills, i)), n), game, split, splitRend, input, screen, tether, tc, vis, world, atlas, chunkRend, objects, objSprites, interact, warp, clock, dn, field, sorsko, menus, saveCtl, invUi, inventories, wallets, nodes, ground, drop: (i, id, n = 1) => dropItem(ground, id, n, players[i].x + 48, players[i].y, { toss: true }), give: (i, id, n = 1) => addItem(inventories[i], id, n), pay: (i, n = 1) => deposit(wallets[i], n) }; // give: fejlesztői segéd (a node-ok S037-ben bekötve; a földre dobott tárgy felvétele az S039-ben jön)
