@@ -16,11 +16,11 @@ export const INVUI_CONFIG = Object.freeze({
 export const INVUI_TEXTS = {
   hu: {
     title: 'Hátizsák', weight: '{kg} / {cap} kg', empty: 'Üres', slot: '{name} ×{n} · {kg} kg',
-    held: 'Fogva: {name} ×{n}', hint1: 'Fogás/lerakás: interakció', hint2: 'Fél: 1. képesség · Mégse: 2. képesség',
+    held: 'Fogva: {name} ×{n}', hint1: 'Fogás/lerakás: interakció', hint2: 'Fél: 1. · Mégse/Eldob: 2. képesség',
   },
   en: {
     title: 'Backpack', weight: '{kg} / {cap} kg', empty: 'Empty', slot: '{name} ×{n} · {kg} kg',
-    held: 'Held: {name} ×{n}', hint1: 'Pick/place: interact', hint2: 'Half: ability 1 · Cancel: ability 2',
+    held: 'Held: {name} ×{n}', hint1: 'Pick/place: interact', hint2: 'Half: ab. 1 · Cancel/Drop: ab. 2',
   },
 };
 

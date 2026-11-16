@@ -18,7 +18,8 @@ import { createTileAtlas } from './render-tiles.js';
 import { WORLD_SEED, createWorldStream, warmStream, updateStream, streamWalls, findOpenSpot } from './world-stream.js';
 import { createChunkRenderer, drawChunks } from './render-chunks.js';
 import { createObjectStore, syncObjects, objectColliders, objectCount } from './world-objects.js';
-import { createObjectSprites, drawYSorted, drawNodeBars } from './render-objects.js';
+import { createObjectSprites, drawYSorted, drawNodeBars, drawGroundItems } from './render-objects.js';
+import { createGroundItems, stepGround, stepDropInput, dropItem } from './game-grounditems.js';
 import { createInteractSystem, addObjectSource, addProvider, onInteract, stepInteraction, defineInteractable, targetOf } from './game-interact.js';
 import { drawInteractPrompts, INTERACT_TEXT } from './render-interact.js';
 import { NODE_TEXTS, HERB_CHANCE } from './data-nodes.js';
@@ -57,6 +58,7 @@ const SPAWN = [[spot.x - 70, spot.y], [spot.x + 70, spot.y]];
 const players = SPAWN.map(([x, y], i) => createPlayer(i, x, y));
 const wallets = createPlayerWallets(); // S036: játékosonként külön pénz (HUD; a mentés az S050-ben)
 const inventories = createPlayerInventories(); // S034: játékosonként külön inventory; az összsúly a p.load-ba és a p.speedMul-ba kerül (az UI az S035-ben)
+const ground = createGroundItems(); // S039: a földre dobott tárgyak (mágnes-felvétel, stackelés, eltűnés); inventory-eldobás: menü nyitva + 2. képesség fogott tárgy nélkül
 const camera = createCamera((players[0].x + players[1].x) / 2, (players[0].y + players[1].y) / 2);
 // Két nézet (S023): két kamera (mindkettő a saját játékosán), két offscreen canvas, fix függőleges osztás.
 // S025: |Δ| <= 0,85·L_normal -> a két nézet egy közös képet ad (nincs osztóvonal); |Δ| > L_normal -> szétválás (hiszterézis + simított átmenet).
@@ -116,7 +118,7 @@ bindTetherConfigKeys(tc);
 snapSplitView(split, players, tc.lNormal()); // induláskor az összeolvadás állapota a játékosok távolságából
 bindLangKeys(i18n, window);                    // S019: F8 = nyelvváltás HU/EN (az S107 menü átveszi)
 const vis = createTetherVisual();              // a fonal megjelenített állapota; vis.on(fn): szint-események (hanghoz)
-const game = { time: 0, ticks: 0, fps: 0, players, inventories, wallets, camera, split, tether, walls, world, objects, interact, warp, clock, field, sorsko, menus, invUi, nodes };
+const game = { time: 0, ticks: 0, fps: 0, players, inventories, wallets, ground, camera, split, tether, walls, world, objects, interact, warp, clock, field, sorsko, menus, invUi, nodes };
 // S032: mentés (F2 mentés, F3 betöltés, F4 export vágólapra, F7 import beillesztéssel; az S049 menü átveszi). A mentett állapot: játékos-pozíciók, seed, GameClock, Sorskő-szint.
 function afterLoad() {
   camera.x = (players[0].x + players[1].x) / 2; // a kamera, a nézetek és a chunkok a betöltött helyhez ugranak
@@ -144,7 +146,9 @@ function update(dt) {
   refreshWalls(); // a betöltött chunkok/objektumok változtak -> falak újraépítése (ugyanabban a tömbben)
   const raw = [input.get(0), input.get(1)];
   const inputs = stepMenus(menus, raw); // nyitott menünél a karakter áll (nincs mozgás/interakció), de a pórázon húzható
+  stepDropInput(ground, invUi, menus, raw, game.inventories, game.players); // S039: eldobás a stepInvUi ELŐTT (a fogás/kijelölés állapota még a régi)
   stepInvUi(invUi, menus, raw, game.inventories, dt); // S035: az inventory UI a NYERS bemenetet kapja (a szűrt nyitva nullázott)
+  stepGround(ground, game.players, game.inventories, dt, walls); // S039: dobás-mozgás, mágnes-felvétel, összevonás, eltűnés (a teher-szinkron ELŐTT)
   syncEncumbrance(game.players, game.inventories); // a teher (p.load a k-hookba, p.speedMul a saját sebességbe) a póráz-lépés előtt
   stepTetherSystem(tether, game.players, inputs, dt);
   stepInteraction(interact, game.players, inputs, dt); // a mozgás után: a zóna a végleges pozícióhoz igazodik
@@ -213,6 +217,7 @@ function renderView(ctx, o, vw, vh, ci) {
   drawChunks(ctx, chunkRend, world, o.x, o.y, vw, vh);
   drawPockets(ctx, warp, o.x, o.y, vw, vh);
   drawSorskoRing(ctx, sorsko, ringA, o.x, o.y, vw, vh); // halvány határ-gyűrű, a határhoz közeledve erősödik
+  drawGroundItems(ctx, ground, o.x, o.y, vw, vh); // S039: a földi tárgyak a fonal alatt, a y-sorted objektumok alatt
   drawTether(ctx, o);
   drawList.length = 0;
   for (const p of game.players) drawList.push(p);
@@ -237,7 +242,7 @@ function render() {
   ctx.font = '12px monospace';
   ctx.textBaseline = 'top';
   ctx.fillStyle = '#9fb4d0';
-  ctx.fillText(`Interlinked ${VERSION} (${VERSION_DATE})  FPS ${game.fps.toFixed(0)}  chunk ${world.chunks.size}/${chunkRend.cache.size}  obj ${objectCount(objects)}  nod ${nodes.depleted.size}  int ${interact.total}  warp ${warpWhere(warp, game.players) || '-'}  mrg ${mergeBlend(split).toFixed(2)}  vch ${warpWhere(warp, game.players) ? 0 : missingViewChunks(world, offs, split.layout)}`, 8, 8);
+  ctx.fillText(`Interlinked ${VERSION} (${VERSION_DATE})  FPS ${game.fps.toFixed(0)}  chunk ${world.chunks.size}/${chunkRend.cache.size}  obj ${objectCount(objects)}  nod ${nodes.depleted.size}  gnd ${ground.items.length}  int ${interact.total}  warp ${warpWhere(warp, game.players) || '-'}  mrg ${mergeBlend(split).toFixed(2)}  vch ${warpWhere(warp, game.players) ? 0 : missingViewChunks(world, offs, split.layout)}`, 8, 8);
   drawClockLabel(ctx, clockLabel(ci, currentLang(), clock.speed), VIRTUAL_W);
   drawHud(ctx, game.players, menus, VIRTUAL_W, VIRTUAL_H, undefined, undefined, game.wallets); // S036: + pénz; S029: játékosonkénti HUD az alsó sarkokban (a nézetek és a színezés fölött)
   drawInventories(ctx, game.players, game.inventories, invUi, menus, VIRTUAL_W, VIRTUAL_H); // S035: a nyitott menü inventory-panelje (a menü-vázat eltakarja)
@@ -274,4 +279,4 @@ function frame(now) {
 }
 requestAnimationFrame(frame);
 
-window.__game = { game, split, splitRend, input, screen, tether, tc, vis, world, atlas, chunkRend, objects, objSprites, interact, warp, clock, dn, field, sorsko, menus, saveCtl, invUi, inventories, wallets, nodes, give: (i, id, n = 1) => addItem(inventories[i], id, n), pay: (i, n = 1) => deposit(wallets[i], n) }; // give: fejlesztői segéd (a node-ok S037-ben bekötve; a földre dobott tárgy felvétele az S039-ben jön)
+window.__game = { game, split, splitRend, input, screen, tether, tc, vis, world, atlas, chunkRend, objects, objSprites, interact, warp, clock, dn, field, sorsko, menus, saveCtl, invUi, inventories, wallets, nodes, ground, drop: (i, id, n = 1) => dropItem(ground, id, n, players[i].x + 48, players[i].y, { toss: true }), give: (i, id, n = 1) => addItem(inventories[i], id, n), pay: (i, n = 1) => deposit(wallets[i], n) }; // give: fejlesztői segéd (a node-ok S037-ben bekötve; a földre dobott tárgy felvétele az S039-ben jön)

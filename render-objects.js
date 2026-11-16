@@ -2,6 +2,8 @@
 // Az S021 pixel-DSL és az S103 valódi art ide köt: a createObjectSprites cseréje, a rajzolási sorrend marad.
 import { OBJECT_DEFS, isObject, sortByY, visibleObjects } from './world-objects.js';
 import { gatherView } from './game-nodes.js';
+import { visibleGround } from './game-grounditems.js';
+import { itemColor } from './game-invui.js';
 
 const MISSING = '#ff00ff'; // hiányzó sprite (a sérült adat látszik)
 
@@ -104,6 +106,29 @@ export function drawNodeBars(ctx, ns, ox, oy, viewW, viewH, cfg = NODE_BAR) {
     ctx.fillStyle = cfg.back; ctx.fillRect(x - 1, y - 1, cfg.w + 2, cfg.h + 2);
     ctx.fillStyle = g.full ? cfg.full : cfg.colors[i];
     ctx.fillRect(x, y, Math.max(1, Math.round(cfg.w * g.ratio)), cfg.h);
+    n++;
+  }
+  return n;
+}
+
+// S039: a földre dobott tárgyak (lapos ikon a talajon, a fonal fölött, a y-sorted objektumok alatt): árnyék + színes négyzet (az inventory ikon-színével), halmozott darabszám,
+// nyugvó tárgy finoman lebeg, az eltűnés előtti utolsó mp-ekben villog. A nézetben kívüli nem rajzolódik. -> a kirajzolt tárgyak száma.
+export const GROUND_DRAW = { shadow: 'rgba(0,0,0,0.28)', edge: 'rgba(8,12,20,0.85)', bob: 2, blinkPeriod: 0.25, font: '9px monospace', text: '#ffffff' };
+const groundList = [];
+export function drawGroundItems(ctx, gs, ox, oy, viewW, viewH, cfg = GROUND_DRAW) {
+  if (!gs || !gs.cfg) return 0;
+  const px = Math.round(ox), py = Math.round(oy), sz = gs.cfg.size;
+  let n = 0;
+  for (const it of visibleGround(gs, px, py, viewW, viewH, groundList)) {
+    const left = (it.ttl > 0 ? it.ttl : gs.cfg.ttl) - it.age;
+    if (left < gs.cfg.blinkAt && Math.floor((gs.time + it.id * 0.07) / cfg.blinkPeriod) % 2 === 1) continue;
+    const settled = !it.vx && !it.vy && !it.mv;
+    const bob = settled ? Math.round(Math.sin(gs.time * 3 + it.id) * cfg.bob / 2) : 0;
+    const x = Math.round(it.x) - px, y = Math.round(it.y) - py;
+    ctx.fillStyle = cfg.shadow; ctx.fillRect(x - sz / 2, y + sz / 2 - 2, sz, 3);
+    ctx.fillStyle = cfg.edge; ctx.fillRect(x - sz / 2 - 1, y - sz / 2 - 1 + bob - 2, sz + 2, sz + 2);
+    ctx.fillStyle = itemColor(it.item); ctx.fillRect(x - sz / 2, y - sz / 2 + bob - 2, sz, sz);
+    if (it.n > 1 && typeof ctx.fillText === 'function') { ctx.font = cfg.font; ctx.textBaseline = 'top'; ctx.fillStyle = cfg.text; ctx.fillText(String(it.n), x + sz / 2 - 2, y + sz / 2 - 6 + bob); }
     n++;
   }
   return n;
