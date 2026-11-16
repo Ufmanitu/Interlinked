@@ -1,10 +1,15 @@
-// S043 tesztek: trade állapotgép (game-trade). Node-ban fut, valódi inventory/pénztárca modulokkal; minden csere atomi és összeg-tartó.
+// S043 tesztek: trade állapotgép (game-trade); S044: trade UI (game-tradeui + render-tradeui) a végén. Node-ban fut, valódi inventory/pénztárca modulokkal; minden csere atomi és összeg-tartó.
 import { test, assert, eq } from './test-index.js';
 import { TRADE_CONFIG, sanitizeTradeConfig, createTrade, onTrade, tradeOpen, tradeRespond, tradeCancel, tradeSetItem, tradeSetMoney, tradeAccept, tradeUnaccept, tradeConfirm, stepTrade, checkTrade, tradeView } from './game-trade.js';
 import { createPlayerInventories, createInventory, addItem, removeItem, countItem, inventoryState } from './game-inventory.js';
 import { createItemRegistry } from './data-items.js';
 import { createPlayerWallets, createWallet, balance, deposit } from './game-wallet.js';
 import { mulberry32 } from './world-noise.js';
+import { createMenus, stepMenus } from './game-hud.js';
+import { createCraftUi, routeCraftInputs, stepCraftUi } from './game-craftui.js';
+import { TRADEUI_TEXTS, TRADEUI_CONFIG, TRADE_REASONS, TRADE_CANCELS, sanitizeTradeUiConfig, reasonKey, cancelKey, createTradeUi, attachTradeUi, routeTradeInputs, tradeMenus, tradeTabActive, buildTradeRows, stepTradeUi, tradeUiView, tabView } from './game-tradeui.js';
+import { drawTradeTabs, drawTradeOverlay, tradePanelLayout } from './render-tradeui.js';
+import { createI18n, addTexts, auditTexts } from './i18n.js';
 
 function setup(slots = 24, gap = 40) {
   const reg = createItemRegistry();
@@ -233,3 +238,151 @@ test('trade: a pénz módosítása is törli az elfogadásokat (és confirm -> o
   tradeAccept(S.t, S.ctx, 0); tradeAccept(S.t, S.ctx, 1); eq(S.t.phase, 'confirm');
   tradeSetMoney(S.t, S.ctx, 1, 6); eq(S.t.phase, 'open'); eq(S.t.accepted.join(), 'false,false'); eq(S.t.confirmed.join(), 'false,false');
 });
+
+// ---- S044: trade UI (a main.js bekötését követő harness) ----
+const P = o => ({ x: 0, y: 0, interact: false, ability1: false, ability2: false, menu: false, interactPressed: false, ability1Pressed: false, ability2Pressed: false, menuPressed: false, ...o });
+const idle = () => [P(), P()];
+function UI(slots = 24, gap = 40) { const S = setup(slots, gap); const U = { S, tu: createTradeUi(), cs: createCraftUi({ recipes: null }), menus: createMenus() }; attachTradeUi(U.tu, S.t); return U; }
+function frame(U, raws, dt = 1 / 60) {
+  const route = routeCraftInputs(U.cs, U.menus, routeTradeInputs(U.tu, U.S.t, U.cs, U.menus, raws));
+  const inputs = stepMenus(U.menus, route.menu);
+  stepCraftUi(U.cs, U.menus, raws, U.S.inventories, dt);
+  const ev = stepTradeUi(U.tu, U.S.t, U.S.ctx, U.menus, raws, dt); stepTrade(U.S.t, U.S.ctx, dt);
+  return { route, inputs, ev };
+}
+const rawOf = (i, o) => (i === 0 ? [P(o), P()] : [P(), P(o)]);
+function press(U, i, o) { const r = frame(U, rawOf(i, o)); frame(U, idle()); frame(U, idle()); return r; }
+function hold(U, i, o, sec) { for (let k = 0; k < Math.round(sec * 60); k++) frame(U, rawOf(i, o)); frame(U, idle()); }
+const PRESS = { interact: true, interactPressed: true };
+function tabTrade(U, i = 0) { for (let k = 0; k < 3; k++) press(U, i, { menuPressed: true }); }
+function startTrade(U) { tabTrade(U); press(U, 0, PRESS); press(U, 1, PRESS); frame(U, idle()); }
+const offerOf = (U, p) => U.S.t.offers[p].lines.map(l => l.id + l.n).join();
+
+test('tradeui: szövegek HU/EN azonos paraméterekkel, minden ok-kulcs megvan, konfig szorítás', () => {
+  const i = createI18n({ lang: 'hu', storage: { getItem() { return null; }, setItem() {} } }); addTexts(i, TRADEUI_TEXTS, 'trade.');
+  const a = auditTexts(i); assert(a.ok, 'audit: ' + JSON.stringify(a));
+  for (const r of [...TRADE_REASONS, 'other']) assert(TRADEUI_TEXTS.hu['r.' + r] && TRADEUI_TEXTS.en['r.' + r], 'ok: ' + r);
+  for (const r of TRADE_CANCELS) assert(TRADEUI_TEXTS.hu['ev.' + r] && TRADEUI_TEXTS.en['ev.' + r], 'cancel: ' + r);
+  eq(reasonKey('range'), 'trade.r.range'); eq(reasonKey('???'), 'trade.r.other'); eq(cancelKey('timeout'), 'trade.ev.timeout'); eq(cancelKey(undefined), 'trade.ev.cancel');
+  const c = sanitizeTradeUiConfig({ visibleRows: 2.9, deadzone: 5, accel1: 3, accel2: 1, flash: -1, confirmLock: NaN });
+  eq(c.visibleRows, 2); eq(c.deadzone, 0.95); eq(c.accel2, 3); eq(c.flash, TRADEUI_CONFIG.flash); eq(c.confirmLock, TRADEUI_CONFIG.confirmLock); assert(Object.isFrozen(c));
+});
+
+test('tradeui: menü-körforgás inv -> craft -> trade -> zár; a panelek elrejtése; a kérés előtt nincs trade', () => {
+  const U = UI(); const M = U.menus;
+  press(U, 0, { menuPressed: true }); assert(M.open[0] && U.tu.players[0].tab === 'inv' && U.cs.players[0].tab === 'inv');
+  press(U, 0, { menuPressed: true }); eq(U.cs.players[0].tab, 'craft'); assert(M.open[0]);
+  press(U, 0, { menuPressed: true }); assert(M.open[0] && tradeTabActive(U.tu, M, 0), 'trade fül'); eq(U.cs.players[0].tab, 'inv');
+  eq(tradeMenus(U.tu, U.S.t, M).open[0], false, 'a trade fülön a menü-váz elrejtve'); assert(!tradeTabActive(U.tu, M, 1));
+  const r = frame(U, [P({ x: 1, interact: true }), P({ x: 1 })]); eq(r.inputs[0].x, 0, 'a trade fülön áll'); eq(r.inputs[1].x, 1, 'a társ mozog');
+  press(U, 0, { menuPressed: true }); eq(M.open[0], false, 'a 4. nyomás zár'); eq(U.tu.players[0].tab, 'inv'); eq(U.cs.players[0].tab, 'inv'); eq(U.S.t.phase, 'idle');
+  press(U, 0, { menuPressed: true }); eq(U.cs.players[0].tab, 'inv'); press(U, 0, { menuPressed: true }); eq(U.cs.players[0].tab, 'craft', 'újrakezdés inventory-ról');
+});
+
+test('tradeui: kérés a trade fülről – távolság, zárt menü, foglalt; az elutasítás/visszavonás/időtúllépés üzenete', () => {
+  const U = UI(24, 300); tabTrade(U); const ps = U.tu.players[0];
+  let v = tabView(U.tu, U.S.t, U.S.ctx, U.menus, 0); eq(v.inRange, false); eq(v.max, 3); assert(v.dist > 9);
+  const r = press(U, 0, PRESS); eq(U.S.t.phase, 'idle'); eq(ps.flash.reason, 'range'); eq(r.ev[0].type, 'open-fail'); eq(tabView(U.tu, U.S.t, U.S.ctx, U.menus, 0).flash.reason, 'range');
+  eq(tabView(U.tu, U.S.t, U.S.ctx, U.menus, 1), null, 'a társ menüje zárva');
+  U.S.players[1].x = 100 + 40; press(U, 0, PRESS); eq(U.S.t.phase, 'request'); eq(U.S.t.from, 0); eq(tabView(U.tu, U.S.t, U.S.ctx, U.menus, 0).busy, true);
+  const rt = routeTradeInputs(U.tu, U.S.t, U.cs, U.menus, [P({ interactPressed: true, ability2Pressed: true, x: 1 }), P({ interactPressed: true, interact: true, ability2Pressed: true, menuPressed: true, x: 1 })]);
+  for (const k of [0, 1]) { assert(!rt[k].interactPressed && !rt[k].ability2Pressed && !rt[k].menuPressed, 'a kérés gombjait elnyeli'); eq(rt[k].x, 1, 'a mozgás marad'); }
+  press(U, 1, { ability2Pressed: true }); eq(U.S.t.phase, 'idle'); eq(U.tu.toast.key, 'trade.ev.declined'); eq(U.S.t.last.reason, 'declined');
+  press(U, 0, PRESS); press(U, 0, { ability2Pressed: true }); eq(U.S.t.phase, 'idle'); eq(U.tu.toast.key, 'trade.ev.cancel');
+  press(U, 0, PRESS); for (let k = 0; k < 60 * 16; k++) frame(U, idle()); eq(U.S.t.phase, 'idle'); eq(U.tu.toast.key, 'trade.ev.timeout'); for (let k = 0; k < 60 * 3; k++) frame(U, idle()); eq(U.tu.toast, null, 'a villanás lejár'); eq(U.S.t.last.reason, 'timeout');
+  press(U, 0, PRESS); frame(U, idle()); eq(tradeUiView(U.tu, U.S.t, U.S.ctx).secs, 15); eq(U.S.t.phase, 'request'); press(U, 1, PRESS); eq(U.S.t.phase, 'open');
+});
+
+test('tradeui: két kurzor – tárgy-választás, db (tartva gyorsul), túl sok sor, párhuzamos szerkesztés', () => {
+  const U = UI(); const [a, b] = U.S.inventories; addItem(a, 'wood', 10); addItem(a, 'stone', 5); addItem(b, 'fiber', 3); startTrade(U);
+  eq(U.S.t.phase, 'open'); eq(buildTradeRows(a, U.S.t.offers[0]).map(r => r.id).join(), 'wood,stone');
+  press(U, 0, { x: 1 }); eq(offerOf(U, 0), 'wood1'); press(U, 0, { x: 1 }); eq(offerOf(U, 0), 'wood2');
+  press(U, 0, { y: 1 }); press(U, 0, { x: 1 }); eq(offerOf(U, 0), 'wood2,stone1'); eq(U.tu.players[0].cursor, 1);
+  press(U, 1, { x: 1 }); eq(offerOf(U, 1), 'fiber1', 'a társ kurzora független');
+  hold(U, 0, { y: -1 }, 0.1); hold(U, 0, { x: 1 }, 1.5); eq(offerOf(U, 0), 'wood10,stone1', 'a tartás gyorsul, a db a készletre szorul');
+  hold(U, 0, { x: -1 }, 1.5); eq(offerOf(U, 0), 'stone1', 'a 0-ra csökkentett sor kiesik');
+  const T = U.S.t; T.cfg = Object.freeze({ ...T.cfg, maxLines: 1 }); press(U, 0, { y: -1 }); press(U, 0, { y: -1 }); press(U, 0, { x: 1 });
+  eq(U.tu.players[0].flash.reason, 'lines'); eq(tradeUiView(U.tu, T, U.S.ctx).sides[0].status.key, 'trade.r.lines');
+  eq(U.S.t.accepted.join(), 'false,false'); press(U, 0, PRESS); eq(T.accepted[0], true); press(U, 1, { x: 1 }); eq(T.accepted[0], false, 'módosítás törli az elfogadást');
+});
+
+test('tradeui: pénz mód – váltás, ±1/±10, tartva gyorsul, plafon az egyenlegnél', () => {
+  const U = UI(); deposit(U.S.wallets[0], 500); startTrade(U); const ps = U.tu.players[0];
+  press(U, 0, { x: 1 }); eq(U.S.t.offers[0].money, 0, 'tárgy módban nincs pénz-változás');
+  press(U, 0, { ability1Pressed: true }); eq(ps.mode, 'money'); press(U, 0, { x: 1 }); eq(U.S.t.offers[0].money, 1);
+  press(U, 0, { y: -1 }); eq(U.S.t.offers[0].money, 11); press(U, 0, { y: 1 }); press(U, 0, { x: -1 }); eq(U.S.t.offers[0].money, 0);
+  press(U, 0, { x: -1 }); eq(U.S.t.offers[0].money, 0, 'nem megy 0 alá');
+  hold(U, 0, { x: 1 }, 6); eq(U.S.t.offers[0].money, 500, 'az egyenleg a plafon'); eq(balance(U.S.wallets[0]), 500, 'a pénz csak a csere után mozdul');
+  const side = tradeUiView(U.tu, U.S.t, U.S.ctx).sides[0]; eq(side.mode, 'money'); eq(side.balance, 500);
+  press(U, 0, { ability1Pressed: true }); eq(ps.mode, 'item');
+});
+
+test('tradeui: teljes menet – elfogad, confirm-zár (nincs véletlen dupla nyomás), végső megerősítés, csere + üzenet', () => {
+  const U = UI(); const [a, b] = U.S.inventories; addItem(a, 'wood', 5); addItem(b, 'stone', 4); deposit(U.S.wallets[1], 40); startTrade(U);
+  hold(U, 0, { x: 1 }, 1.5); hold(U, 1, { x: 1 }, 1.5); press(U, 1, { ability1Pressed: true }); hold(U, 1, { x: 1 }, 0.5);
+  const m = U.S.t.offers[1].money; assert(m > 0 && m <= 40); eq(offerOf(U, 0), 'wood5'); eq(offerOf(U, 1), 'stone4');
+  press(U, 0, PRESS); eq(U.S.t.phase, 'open'); eq(tradeUiView(U.tu, U.S.t, U.S.ctx).sides[0].status.key, 'trade.status.accepted'); eq(tradeUiView(U.tu, U.S.t, U.S.ctx).sides[1].status.key, 'trade.status.theirs');
+  press(U, 0, PRESS); eq(U.S.t.phase, 'open', 'ugyanazt kétszer elfogadni nem számít a társ elfogadásának');
+  press(U, 1, PRESS); eq(U.S.t.phase, 'confirm'); eq(tradeUiView(U.tu, U.S.t, U.S.ctx).sides[0].status.key, 'trade.status.confirm');
+  frame(U, [P(PRESS), P(PRESS)]); eq(U.S.t.confirmed.join(), 'false,false', 'a zár alatt a megerősítés nem megy');
+  for (let k = 0; k < 40; k++) frame(U, idle());
+  press(U, 0, PRESS); eq(U.S.t.confirmed.join(), 'true,false'); eq(tradeUiView(U.tu, U.S.t, U.S.ctx).sides[0].status.key, 'trade.status.confirmed');
+  assert(countItem(a, 'wood') === 5, 'a csere még nem futott'); press(U, 1, PRESS);
+  eq(U.S.t.phase, 'idle'); eq(countItem(a, 'wood'), 0); eq(countItem(b, 'wood'), 5); eq(countItem(a, 'stone'), 4); eq(countItem(b, 'stone'), 0);
+  eq(balance(U.S.wallets[0]), m); eq(balance(U.S.wallets[1]), 40 - m); eq(U.tu.toast.key, 'trade.ev.done'); assert(U.tu.toast.ok);
+});
+
+test('tradeui: 2. képesség – elfogadás visszavonása, majd mégse; üres elfogadás hibája; a távolság megszakít; nyitott trade alatt a karakter áll', () => {
+  const U = UI(); addItem(U.S.inventories[0], 'wood', 3); startTrade(U);
+  press(U, 0, PRESS); eq(U.tu.players[0].flash.reason, 'empty'); eq(tradeUiView(U.tu, U.S.t, U.S.ctx).sides[0].status.key, 'trade.r.empty');
+  press(U, 0, { x: 1 }); press(U, 0, PRESS); eq(U.S.t.accepted[0], true); press(U, 0, { ability2Pressed: true }); eq(U.S.t.accepted[0], false); eq(U.S.t.phase, 'open');
+  press(U, 0, { ability2Pressed: true }); eq(U.S.t.phase, 'idle'); eq(U.tu.toast.key, 'trade.ev.cancel'); eq(countItem(U.S.inventories[0], 'wood'), 3);
+  press(U, 0, PRESS); press(U, 1, PRESS); frame(U, idle()); eq(U.S.t.phase, 'open'); const r = frame(U, [P({ x: 1, y: 1 }), P({ x: -1 })]);
+  eq(r.route.menu[0].x, 0); eq(r.route.menu[1].x, 0); eq(r.route.inv[1].x, 0, 'nyitott trade: üres bemenet');
+  U.S.players[1].x = 900; frame(U, idle()); eq(U.S.t.phase, 'idle'); eq(U.tu.toast.key, 'trade.ev.range');
+});
+
+test('tradeui: a nem megvalósítható csere jelzése mindkét panelen (nincs hely), a megoldás után eltűnik', () => {
+  const U = UI(2); const [a, b] = U.S.inventories; addItem(a, 'wood', 3); addItem(b, 'stone', 1); addItem(b, 'fiber', 1); startTrade(U);
+  press(U, 0, { x: 1 }); const v = tradeUiView(U.tu, U.S.t, U.S.ctx);
+  eq(v.sides[0].status.key, 'trade.r.space'); eq(v.sides[1].status.key, 'trade.r.space'); eq(v.sides[0].status.kind, 'warn');
+  press(U, 1, { x: 1 }); eq(tradeUiView(U.tu, U.S.t, U.S.ctx).sides[1].status.key, 'trade.status.open', 'a fogadó saját felajánlása helyet szabadít');
+});
+
+test('tradeui: rajz – trade fül, kérés-sáv, két panel, üzenet; a képen belül, nyelvi kulcsokkal', () => {
+  const U = UI(); addItem(U.S.inventories[0], 'wood', 3); const players = [{ color: '#58f' }, { color: '#f55' }];
+  const tr = (k, p) => k + (p ? JSON.stringify(p) : '');
+  const txt = c => c.calls.filter(x => x[0] === 'fillText').map(x => String(x[1])).join('|');
+  let c = fakeCtx(); eq(drawTradeTabs(c, U.tu, U.S.t, U.S.ctx, U.menus, players, 960, 540, tr), 0); eq(drawTradeOverlay(fakeCtx(), U.tu, U.S.t, U.S.ctx, 960, 540, tr), 0);
+  tabTrade(U); c = fakeCtx(); eq(drawTradeTabs(c, U.tu, U.S.t, U.S.ctx, U.menus, players, 960, 540, tr), 1); assert(txt(c).includes('trade.tab.partner') && txt(c).includes('trade.tab.go'));
+  press(U, 0, PRESS); c = fakeCtx(); eq(drawTradeOverlay(c, U.tu, U.S.t, U.S.ctx, 960, 540, tr), 1); assert(txt(c).includes('trade.req') && txt(c).includes('trade.req.to'));
+  press(U, 1, PRESS); press(U, 0, { x: 1 }); press(U, 0, PRESS);
+  c = fakeCtx(); eq(drawTradeOverlay(c, U.tu, U.S.t, U.S.ctx, 960, 540, tr), 2);
+  const s = txt(c); for (const k of ['trade.player', 'item.wood', 'trade.badge.accepted', 'trade.status.accepted', 'trade.hint1', 'trade.hint2']) assert(s.includes(k), k);
+  for (const i of [0, 1]) { const L = tradePanelLayout(i, 960, 540); assert(L.x >= 0 && L.y >= 0 && L.x + L.w <= 960 && L.y + L.h <= 540, 'a képen belül'); }
+  assert(tradePanelLayout(1, 960, 540).x >= tradePanelLayout(0, 960, 540).x + 300, 'P2 jobbra');
+  press(U, 0, { ability1Pressed: true }); assert(txt((c = fakeCtx(), drawTradeOverlay(c, U.tu, U.S.t, U.S.ctx, 960, 540, tr), c)).includes('trade.moneyMode'));
+  press(U, 0, { ability2Pressed: true }); press(U, 0, { ability2Pressed: true }); c = fakeCtx(); eq(drawTradeOverlay(c, U.tu, U.S.t, U.S.ctx, 960, 540, tr), 1, 'csak az üzenet'); assert(txt(c).includes('trade.ev.cancel'));
+  eq(drawTradeOverlay(fakeCtx(), U.tu, U.S.t, U.S.ctx, 960, 540), 1, 'alap t()-vel sem dob');
+});
+
+test('tradeui: hibás bemenet nem dob; 5000 kockás fuzz – tárgy- és pénz-összeg tartása, érvényes fázisok', () => {
+  const U = UI(); for (const k of [() => frame(U, null), () => frame(U, [null, undefined]), () => stepTradeUi(U.tu, U.S.t, {}, null, null, NaN), () => tradeUiView(U.tu, U.S.t, {}), () => tabView(U.tu, U.S.t, {}, U.menus, 0), () => buildTradeRows(null, null), () => routeTradeInputs(U.tu, U.S.t, null, null, null)]) k();
+  const F = UI(8); const rnd = mulberry32(44); const [a, b] = F.S.inventories; addItem(a, 'wood', 30); addItem(a, 'stone', 12); addItem(b, 'fiber', 20); addItem(b, 'wood', 5); deposit(F.S.wallets[0], 300); deposit(F.S.wallets[1], 120);
+  const total = () => ['wood', 'stone', 'fiber'].map(id => countItem(a, id) + countItem(b, id)).join() + '|' + (balance(F.S.wallets[0]) + balance(F.S.wallets[1]));
+  const before = total(); let seen = 0;
+  for (let f = 0; f < 5000; f++) {
+    if (f % 700 === 0) F.S.players[1].x = rnd() < 0.5 ? 140 : 400;
+    const mk = () => { const o = { x: Math.floor(rnd() * 3) - 1, y: Math.floor(rnd() * 3) - 1 }; for (const n of ['interact', 'ability1', 'ability2', 'menu']) if (rnd() < 0.08) { o[n] = true; o[n + 'Pressed'] = true; } if (rnd() < 0.5) o.interactPressed = o.interact = rnd() < 0.5; return P(o); };
+    frame(F, [mk(), mk()], 1 / 60); assert(['idle', 'request', 'open', 'confirm'].includes(F.S.t.phase)); seen += F.S.t.stats.done;
+    for (const p of F.tu.players) assert(p.cursor >= 0 && Number.isFinite(p.cursor) && (p.mode === 'item' || p.mode === 'money'));
+    if (f % 250 === 0) eq(total(), before, 'összeg-tartás @' + f);
+  }
+  eq(total(), before); assert(F.S.t.stats.cancelled + F.S.t.stats.done + F.S.t.stats.failed > 0, 'történt trade');
+  const g = fakeCtx(); drawTradeOverlay(g, F.tu, F.S.t, F.S.ctx, 960, 540); drawTradeTabs(g, F.tu, F.S.t, F.S.ctx, F.menus, [{}, {}], 960, 540);
+});
+
+function fakeCtx() {
+  const calls = [];
+  return new Proxy({ calls }, { get(tg, k) { if (k in tg) return tg[k]; if (k === 'measureText') return x => ({ width: String(x).length * 6 }); return (...a) => { calls.push([k, ...a]); }; }, set(tg, k, v) { tg[k] = v; return true; } });
+}
