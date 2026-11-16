@@ -1,18 +1,79 @@
 // S032: mentés — verziózott JSON (localStorage + szöveges export/import), billentyűk és értesítés.
 // Tiszta logika (nincs DOM/canvas függés; a tároló, a vágólap és a kérdés injektálható). A rajz a main.js-ben van.
-// ctx = {players[2], clock, sorsko, seed}: a mentett állapot ezekből áll (játékos-pozíciók, világ-seed, GameClock, Sorskő-szint).
+// ctx = {players[2], clock, sorsko, seed} + (S050, opcionális) {inventories, wallets, skills, prog, nodes, stations, professions}: a mentett állapot ezekből áll
+// (játékos-pozíciók, világ-seed, GameClock, Sorskő-szint, inventory, pénz, skillek, szint, kitermelt node-ok, lerakott állomások, szakmák; lásd SECTIONS).
 import { clockState, restoreClock } from './game-clock.js';
 import { sorskoState, restoreSorsko } from './game-sorsko.js';
+import { inventoryState, restoreInventory } from './game-inventory.js';
+import { walletState, restoreWallet } from './game-wallet.js';
+import { skillState, restoreSkills } from './game-skills.js';
+import { progressionState, restoreProgression } from './game-curve.js';
+import { nodeState, restoreNodes } from './game-nodes.js';
+import { stationState, restoreStations } from './game-stations.js';
+import { professionState, restoreProfessions } from './game-professions.js';
 
-export const SAVE_VERSION = 1;
+
+// --- S050: a mentés bővítése: inventory, pénz, skillek, karakter-szint, kitermelt node-ok, lerakott állomások, szakmák ---
+// A szekciók a ctx opcionális mezői: ha a ctx-ben nincs meg a célrendszer, a szekció nem kerül a mentésbe / a betöltés kihagyja.
+// A visszatöltés szekciónként atomi; a teljes betöltés atomitását az applySave rollback-je adja (az előző állapot visszaírása).
+const isArr = Array.isArray;
+const isObj = v => !!v && typeof v === 'object' && !Array.isArray(v);
+const pair = v => isArr(v) && v.length === 2 && v.every(isObj);
+const clockT = c => (c.clock && typeof c.clock.t === 'number' && isFinite(c.clock.t) ? c.clock.t : 0);
+const two = a => isArr(a) && a.length >= 2;
+
+// key: a mentés-objektum kulcsa; err: hibakód; has(ctx): van-e célrendszer; cap(ctx): állapot; ok(d): szerkezet; put(ctx, d): visszatöltés -> bool
+export const SECTIONS = [
+  { key: 'inv', err: 'inventory', has: c => two(c.inventories), cap: c => c.inventories.slice(0, 2).map(inventoryState), ok: pair,
+    put: (c, d) => restoreInventory(c.inventories[0], d[0]) && restoreInventory(c.inventories[1], d[1]) },
+  { key: 'wal', err: 'wallet', has: c => two(c.wallets), cap: c => c.wallets.slice(0, 2).map(walletState), ok: pair,
+    put: (c, d) => restoreWallet(c.wallets[0], d[0]) && restoreWallet(c.wallets[1], d[1]) },
+  { key: 'skl', err: 'skills', has: c => isObj(c.skills), cap: c => skillState(c.skills), ok: isObj, put: (c, d) => restoreSkills(c.skills, d) },
+  { key: 'prog', err: 'prog', has: c => isObj(c.prog), cap: c => progressionState(c.prog), ok: isObj, put: (c, d) => restoreProgression(c.prog, d) },
+  // a node-ok hátralévő újranövési ideje a játékórához képest mentett, ezért a visszatöltés az óra visszaírása UTÁN fut
+  { key: 'nod', err: 'nodes', has: c => isObj(c.nodes) && isObj(c.nodes.os), cap: c => nodeState(c.nodes, clockT(c)), ok: isObj, put: (c, d) => restoreNodes(c.nodes, d, clockT(c)) },
+  { key: 'stn', err: 'stations', has: c => isObj(c.stations), cap: c => stationState(c.stations), ok: isObj, put: (c, d) => restoreStations(c.stations, d) },
+  { key: 'prof', err: 'professions', has: c => isObj(c.professions), cap: c => professionState(c.professions), ok: isObj, put: (c, d) => restoreProfessions(c.professions, d) },
+];
+export const EXTRA_ERRORS = SECTIONS.map(s => s.err);
+
+// A ctx-ben jelen lévő rendszerek állapota (mély, JSON-barát). Egy szekció hibája nem dobja el a többit.
+export function captureExtras(ctx) {
+  const out = {};
+  for (const s of SECTIONS) {
+    try { if (s.has(ctx)) out[s.key] = s.cap(ctx); } catch (e) { /* a szekció kimarad; a többi mentése nem akad el */ }
+  }
+  return out;
+}
+
+// A mentésben jelen lévő szekciók szerkezete (a ctx-től függetlenül) -> hibakód | null. A hiányzó szekció (régi mentés) rendben van.
+export function checkExtras(d) {
+  if (!isObj(d)) return null;
+  for (const s of SECTIONS) if (d[s.key] !== undefined && !s.ok(d[s.key])) return s.err;
+  return null;
+}
+
+// Visszatöltés: csak ott, ahol a mentésben és a ctx-ben is van szekció. -> hibakód | null (az első hibánál megáll; a hívó rollback-el)
+export function applyExtras(ctx, d) {
+  for (const s of SECTIONS) {
+    if (!isObj(d) || d[s.key] === undefined) continue;
+    let has = false, ok = false;
+    try { has = s.has(ctx); ok = !has || s.put(ctx, d[s.key]) === true; } catch (e) { ok = false; }
+    if (has && !ok) return s.err;
+  }
+  return null;
+}
+
+export const SAVE_VERSION = 2;
 export const SAVE_MAGIC = 'interlinked-save';
 export const SAVE_KEY = 'interlinked.save';
-export const SAVE_LIMITS = { maxText: 200000, maxCoord: 1e8 };
+export const SAVE_LIMITS = { maxText: 1000000, maxCoord: 1e8 };
 export const SAVE_TOAST_TIME = 2.5; // mp
 // Migrációs hook: MIGRATIONS[n](adat) a v=n mentést v=n+1 alakra hozza (új verziónál ide kerül a lépés + SAVE_VERSION nő).
-export const MIGRATIONS = {};
+// v1 -> v2 (S050): a bővítő szekciók opcionálisak, a régi mentés változatlanul átmegy (a hiányzó szekciók állapota érintetlen marad).
+export const MIGRATIONS = { 1: d => d };
 export const SAVE_KEYS = new Map([['F2', 'save'], ['F3', 'load'], ['F4', 'export'], ['F7', 'import']]);
-export const SAVE_ERRORS = ['none', 'format', 'parse', 'size', 'newer', 'migrate', 'seed', 'players', 'clock', 'sorsko', 'storage', 'copy', 'ctx', 'cancel'];
+export const SAVE_ERRORS = ['none', 'format', 'parse', 'size', 'newer', 'migrate', 'seed', 'players', 'clock', 'sorsko', 'storage', 'copy', 'ctx', 'cancel', ...EXTRA_ERRORS];
 
 export const SAVE_TEXTS = {
   hu: {
@@ -23,6 +84,9 @@ export const SAVE_TEXTS = {
     'err.sorsko': 'Hibás Sorskő-adat a mentésben', 'err.storage': 'A böngésző nem engedi a mentést',
     'err.copy': 'A vágólapra másolás nem sikerült', 'err.ctx': 'A játékállapot nem érhető el', 'err.cancel': 'Megszakítva',
     'import.prompt': 'Illeszd be a mentés szövegét:',
+    'err.inventory': 'Hibás inventory-adat a mentésben', 'err.wallet': 'Hibás pénz-adat a mentésben', 'err.skills': 'Hibás skill-adat a mentésben',
+    'err.prog': 'Hibás szint-adat a mentésben', 'err.nodes': 'Hibás kitermelés-adat a mentésben', 'err.stations': 'Hibás állomás-adat a mentésben',
+    'err.professions': 'Hibás szakma-adat a mentésben',
   },
   en: {
     'ok.save': 'Saved', 'ok.load': 'Loaded', 'ok.export': 'Save copied to the clipboard', 'ok.import': 'Loaded from the pasted save',
@@ -32,11 +96,13 @@ export const SAVE_TEXTS = {
     'err.sorsko': 'Invalid Fate Stone data in the save', 'err.storage': 'The browser does not allow saving',
     'err.copy': 'Copying to the clipboard failed', 'err.ctx': 'The game state is not available', 'err.cancel': 'Cancelled',
     'import.prompt': 'Paste the save text:',
+    'err.inventory': 'Invalid inventory data in the save', 'err.wallet': 'Invalid money data in the save', 'err.skills': 'Invalid skill data in the save',
+    'err.prog': 'Invalid level data in the save', 'err.nodes': 'Invalid harvest data in the save', 'err.stations': 'Invalid station data in the save',
+    'err.professions': 'Invalid profession data in the save',
   },
 };
 
 const isNum = v => typeof v === 'number' && isFinite(v);
-const isObj = v => !!v && typeof v === 'object' && !Array.isArray(v);
 const fail = error => ({ ok: false, error });
 
 function ctxOk(ctx) {
@@ -49,6 +115,7 @@ export function captureSave(ctx, now = Date.now()) {
     magic: SAVE_MAGIC, v: SAVE_VERSION, savedAt: isNum(now) ? now : 0, seed: ctx.seed,
     players: [0, 1].map(i => ({ x: ctx.players[i].x, y: ctx.players[i].y })),
     clock: clockState(ctx.clock), sorsko: sorskoState(ctx.sorsko),
+    ...captureExtras(ctx), // S050
   };
 }
 
@@ -79,12 +146,16 @@ export function validateSave(d, seed) {
   for (const p of d.players) if (!isObj(p) || !isNum(p.x) || !isNum(p.y) || Math.abs(p.x) > m || Math.abs(p.y) > m) return fail('players');
   if (!isObj(d.clock)) return fail('clock');
   if (!isObj(d.sorsko)) return fail('sorsko');
+  const xe = checkExtras(d); // S050: a jelen lévő bővítő szekciók szerkezete
+  if (xe) return fail(xe);
   return { ok: true };
 }
 
 function writeState(ctx, d) { // -> hibakód | null
   if (!restoreSorsko(ctx.sorsko, d.sorsko)) return 'sorsko';
   if (!restoreClock(ctx.clock, d.clock)) return 'clock';
+  const xe = applyExtras(ctx, d); // S050: az óra UTÁN (a node-ok újranövési ideje az órához képest van)
+  if (xe) return xe;
   for (let i = 0; i < 2; i++) {
     const p = ctx.players[i];
     p.x = d.players[i].x; p.y = d.players[i].y; p.vx = 0; p.vy = 0;

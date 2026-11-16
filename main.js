@@ -51,7 +51,7 @@ import { SORSKO_CONFIG, createSorsko, stepSorsko, sorskoCollider, ringStrength, 
 import { createSorskoSprites, visibleSorsko, drawSorsko, drawSorskoRing } from './render-sorsko.js';
 import { createMenus, stepMenus, missingViewChunks, menuOpen } from './game-hud.js';
 import { drawHud } from './render-hud.js';
-import { SAVE_TEXTS, createSaveController, bindSaveKeys, stepSaveToast } from './game-save.js';
+import { SAVE_TEXTS, createSaveController, bindSaveKeys, stepSaveToast, runSaveAction } from './game-save.js';
 
 initDebug();
 registerTexts(SAVE_TEXTS, 'save.');           // S032: mentés-szövegek (HU/EN)
@@ -80,7 +80,7 @@ const input = new Input();
 const spot = findOpenSpot(WORLD_SEED, 0, 0) || { x: 16, y: 16 };
 const SPAWN = [[spot.x - 70, spot.y], [spot.x + 70, spot.y]];
 const players = SPAWN.map(([x, y], i) => createPlayer(i, x, y));
-const wallets = createPlayerWallets(); // S036: játékosonként külön pénz (HUD; a mentés az S050-ben)
+const wallets = createPlayerWallets(); // S036: játékosonként külön pénz (HUD; S050: mentve)
 const inventories = createPlayerInventories(); // S034: játékosonként külön inventory; az összsúly a p.load-ba és a p.speedMul-ba kerül (az UI az S035-ben)
 const ground = createGroundItems(); // S039: a földre dobott tárgyak (mágnes-felvétel, stackelés, eltűnés); inventory-eldobás: menü nyitva + 2. képesség fogott tárgy nélkül
 const camera = createCamera((players[0].x + players[1].x) / 2, (players[0].y + players[1].y) / 2);
@@ -174,8 +174,8 @@ bindTetherConfigKeys(tc);
 snapSplitView(split, players, tc.lNormal()); // induláskor az összeolvadás állapota a játékosok távolságából
 bindLangKeys(i18n, window);                    // S019: F8 = nyelvváltás HU/EN (az S107 menü átveszi)
 const vis = createTetherVisual();              // a fonal megjelenített állapota; vis.on(fn): szint-események (hanghoz)
-const game = { menuUi, prog, actlog, skills, craftUi, tradeUi, trade, stations, time: 0, ticks: 0, fps: 0, players, inventories, wallets, ground, camera, split, tether, walls, world, objects, interact, warp, clock, field, sorsko, menus, invUi, nodes };
-// S032: mentés (F2 mentés, F3 betöltés, F4 export vágólapra, F7 import beillesztéssel; az S049 menü átveszi). A mentett állapot: játékos-pozíciók, seed, GameClock, Sorskő-szint.
+// S032/S050: mentés (F2 mentés, F3 betöltés, F4 export vágólapra, F7 import beillesztéssel; a menü beállítások-füle is hívja). A mentett állapot: játékos-pozíciók, seed, GameClock, Sorskő-szint,
+// inventory, pénz, skillek, karakter-szint, kitermelt node-ok, lerakott állomások (a földre dobott tárgyak és a gyűjtés közbeni sérülés nem mentett).
 function afterLoad() {
   camera.x = (players[0].x + players[1].x) / 2; // a kamera, a nézetek és a chunkok a betöltött helyhez ugranak
   camera.y = (players[0].y + players[1].y) / 2;
@@ -185,7 +185,7 @@ function afterLoad() {
   refreshWalls();
   snapSplitView(split, players, tc.lNormal());
 }
-const saveCtl = createSaveController({ players, clock, sorsko, seed: WORLD_SEED }, {
+const saveCtl = createSaveController({ players, clock, sorsko, seed: WORLD_SEED, inventories, wallets, skills, prog, nodes, stations }, {
   copy: copyText, ask: key => (typeof window !== 'undefined' && window.prompt ? window.prompt(t(key)) : null), onLoaded: afterLoad,
 });
 bindSaveKeys(saveCtl);
@@ -194,12 +194,13 @@ bindActLogKeys(actlog, { copy: copyText, tr: (k, p) => t('actlog.' + k, p) }, wi
 const bg = p => { try { Promise.resolve(p).catch(e => { menuUi.lastError = e; }); } catch (e) { menuUi.lastError = e; } };
 const menuUi = createMenuUi({ actions: {
   lang: () => changeLang(currentLang() === 'hu' ? 'en' : 'hu'),
-  save: () => bg(saveCtl.saveNow()),
-  load: () => bg(saveCtl.loadNow()),
-  export: () => bg(saveCtl.exportNow()),
-  import: () => bg(saveCtl.importNow()),
+  save: () => bg(runSaveAction(saveCtl, 'save')),
+  load: () => bg(runSaveAction(saveCtl, 'load')),
+  export: () => bg(runSaveAction(saveCtl, 'export')),
+  import: () => bg(runSaveAction(saveCtl, 'import')),
   log: () => { saveActLog(actlog); copyText(exportActLogText(actlog, (k, p) => t('actlog.' + k, p))); },
 } });
+const game = { menuUi, prog, actlog, skills, craftUi, tradeUi, trade, stations, time: 0, ticks: 0, fps: 0, players, inventories, wallets, ground, camera, split, tether, walls, world, objects, interact, warp, clock, field, sorsko, menus, invUi, nodes };
 const drawList = [];                           // y-sort lista: játékosok + látható házak
 
 function update(dt) {
