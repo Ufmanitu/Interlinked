@@ -15,6 +15,7 @@ const MODULES = [
   './data-recipes.js', './game-crafting.js', // S040
   './data-stations.js', './game-stations.js', './render-stations.js', // S041
   './game-wallet.js', './game-trade.js', // S043
+  './game-ability.js', // S054
 ];
 const FRAMES = 600;
 const DT = 1 / 60;

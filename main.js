@@ -37,6 +37,7 @@ import { workMul } from './game-stamina.js'; // S048
 import { CHARACTER_TEXTS } from './data-character.js'; // S053
 import { createCharacterRegistry } from './game-registry.js';
 import { applyRace, gatherSpeedMul, raceTerrain } from './game-race.js';
+import { createAbilitySystem, stepAbilities } from './game-ability.js'; // S054
 import { createNodeSystem, stepNodes, nodeInteractables, onNode, gatherView } from './game-nodes.js';
 import { SKILL_TEXTS, createSkillSystem, connectSkills, skillsOf, onSkill } from './game-skills.js';
 import { PROG_TEXTS, createProgression, connectProgression, onProgress } from './game-curve.js';
@@ -87,6 +88,7 @@ registerTexts(CHARACTER_TEXTS, ''); // S053: faj-nevek és leírások (race.<id>
 const charReg = createCharacterRegistry(); // S053: fajok (törpe, tünde, ork); kasztok S055-től
 applyRace(charReg, players[0], 'dwarf'); // S053: ideiglenes alap-fajok; az S063 karakterválasztó cseréli (a faj mentése is ott)
 applyRace(charReg, players[1], 'elf');
+const abilities = createAbilitySystem({ reg: charReg }); // S054: képesség-végrehajtó (2 gomb = a kaszt első két képessége; kasztok S055-től; hatás: onAbility/setAbilityHandler)
 const wallets = createPlayerWallets(); // S036: játékosonként külön pénz (HUD; S050: mentve)
 const inventories = createPlayerInventories(); // S034: játékosonként külön inventory; az összsúly a p.load-ba és a p.speedMul-ba kerül (az UI az S035-ben)
 const ground = createGroundItems(); // S039: a földre dobott tárgyak (mágnes-felvétel, stackelés, eltűnés); inventory-eldobás: menü nyitva + 2. képesség fogott tárgy nélkül
@@ -208,7 +210,7 @@ const menuUi = createMenuUi({ actions: {
   import: () => bg(runSaveAction(saveCtl, 'import')),
   log: () => { saveActLog(actlog); copyText(exportActLogText(actlog, (k, p) => t('actlog.' + k, p))); },
 } });
-const game = { menuUi, prog, actlog, skills, craftUi, tradeUi, trade, stations, time: 0, ticks: 0, fps: 0, players, inventories, wallets, ground, camera, split, tether, walls, world, objects, interact, warp, clock, field, sorsko, menus, invUi, nodes };
+const game = { abilities, menuUi, prog, actlog, skills, craftUi, tradeUi, trade, stations, time: 0, ticks: 0, fps: 0, players, inventories, wallets, ground, camera, split, tether, walls, world, objects, interact, warp, clock, field, sorsko, menus, invUi, nodes };
 const drawList = [];                           // y-sort lista: játékosok + látható házak
 
 function update(dt) {
@@ -235,6 +237,7 @@ function update(dt) {
   syncEncumbrance(game.players, game.inventories); // a teher (p.load a k-hookba, p.speedMul a saját sebességbe) a póráz-lépés előtt
   stepTetherSystem(tether, game.players, inputs, dt);
   stepInteraction(interact, game.players, inputs, dt); // a mozgás után: a zóna a végleges pozícióhoz igazodik
+  stepAbilities(abilities, game.players, inputs, [interact.players[0] && interact.players[0].facing, interact.players[1] && interact.players[1].facing], dt, { inventories: game.inventories }); // S054: képesség-gombok (a SZŰRT bemenet: nyitott menünél nincs használat)
   stepNodes(nodes, game.players, inputs, [targetOf(interact, 0), targetOf(interact, 1)], game.inventories, clock.t, dt); // S037: gyűjtés (a SZŰRT bemenet: nyitott menünél nincs interakció)
   game.players.forEach((p, i) => { p.gathering = gatherView(nodes, i) != null; }); // S048: a gyűjtés a következő kockában fogyaszt staminát (tether-system)
   stepActLog(actlog, dt, [activityOf(0), activityOf(1)]); // S047: tevékenység-idő napló
@@ -371,4 +374,4 @@ function frame(now) {
 }
 requestAnimationFrame(frame);
 
-window.__game = { menuUi, prog, actlog, skills, craftUi, tradeUi, trade, stations, craft: (i, id, n = 1) => craft(inventories[i], getRecipe(recipes, id), stationCtx(stations, players[i], skillsOf(skills, i)), n), game, split, splitRend, input, screen, tether, tc, vis, world, atlas, chunkRend, objects, objSprites, interact, warp, clock, dn, field, sorsko, menus, saveCtl, invUi, inventories, wallets, nodes, ground, drop: (i, id, n = 1) => dropItem(ground, id, n, players[i].x + 48, players[i].y, { toss: true }), give: (i, id, n = 1) => addItem(inventories[i], id, n), pay: (i, n = 1) => deposit(wallets[i], n) }; // give: fejlesztői segéd (a node-ok S037-ben bekötve; a földre dobott tárgy felvétele az S039-ben jön)
+window.__game = { abilities, menuUi, prog, actlog, skills, craftUi, tradeUi, trade, stations, craft: (i, id, n = 1) => craft(inventories[i], getRecipe(recipes, id), stationCtx(stations, players[i], skillsOf(skills, i)), n), game, split, splitRend, input, screen, tether, tc, vis, world, atlas, chunkRend, objects, objSprites, interact, warp, clock, dn, field, sorsko, menus, saveCtl, invUi, inventories, wallets, nodes, ground, drop: (i, id, n = 1) => dropItem(ground, id, n, players[i].x + 48, players[i].y, { toss: true }), give: (i, id, n = 1) => addItem(inventories[i], id, n), pay: (i, n = 1) => deposit(wallets[i], n) }; // give: fejlesztői segéd (a node-ok S037-ben bekötve; a földre dobott tárgy felvétele az S039-ben jön)
