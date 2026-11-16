@@ -34,6 +34,9 @@ import { createInteractSystem, addObjectSource, addProvider, onInteract, stepInt
 import { drawInteractPrompts, INTERACT_TEXT } from './render-interact.js';
 import { NODE_TEXTS, HERB_CHANCE } from './data-nodes.js';
 import { workMul } from './game-stamina.js'; // S048
+import { CHARACTER_TEXTS } from './data-character.js'; // S053
+import { createCharacterRegistry } from './game-registry.js';
+import { applyRace, gatherSpeedMul, raceTerrain } from './game-race.js';
 import { createNodeSystem, stepNodes, nodeInteractables, onNode, gatherView } from './game-nodes.js';
 import { SKILL_TEXTS, createSkillSystem, connectSkills, skillsOf, onSkill } from './game-skills.js';
 import { PROG_TEXTS, createProgression, connectProgression, onProgress } from './game-curve.js';
@@ -80,6 +83,10 @@ const input = new Input();
 const spot = findOpenSpot(WORLD_SEED, 0, 0) || { x: 16, y: 16 };
 const SPAWN = [[spot.x - 70, spot.y], [spot.x + 70, spot.y]];
 const players = SPAWN.map(([x, y], i) => createPlayer(i, x, y));
+registerTexts(CHARACTER_TEXTS, ''); // S053: faj-nevek és leírások (race.<id>, race.<id>.desc)
+const charReg = createCharacterRegistry(); // S053: fajok (törpe, tünde, ork); kasztok S055-től
+applyRace(charReg, players[0], 'dwarf'); // S053: ideiglenes alap-fajok; az S063 karakterválasztó cseréli (a faj mentése is ott)
+applyRace(charReg, players[1], 'elf');
 const wallets = createPlayerWallets(); // S036: játékosonként külön pénz (HUD; S050: mentve)
 const inventories = createPlayerInventories(); // S034: játékosonként külön inventory; az összsúly a p.load-ba és a p.speedMul-ba kerül (az UI az S035-ben)
 const ground = createGroundItems(); // S039: a földre dobott tárgyak (mágnes-felvétel, stackelés, eltűnés); inventory-eldobás: menü nyitva + 2. képesség fogott tárgy nélkül
@@ -97,7 +104,7 @@ syncObjects(objects, world);
 const objSprites = createObjectSprites();
 const interact = createInteractSystem();     // S016: interakciós zóna, célpont, egy gomb; a tárgyak a forrásból jönnek
 addObjectSource(interact, objects);
-const nodes = createNodeSystem(objects, { seed: WORLD_SEED, hooks: { speed: p => workMul(typeof p === 'number' ? players[p] : p, tether.cfg.act), power: () => 1 } }); // S037: gyűjthető node-ok (fa, kő, gyógynövény): tartott interakció-gomb -> ütések -> drop az inventoryba, újranövés a játékidővel
+const nodes = createNodeSystem(objects, { seed: WORLD_SEED, hooks: { speed: (p, node) => { const pl = typeof p === 'number' ? players[p] : p; return workMul(pl, tether.cfg.act) * gatherSpeedMul(charReg, pl, node && node.type); }, power: () => 1 } }); // S037: gyűjthető node-ok (fa, kő, gyógynövény): tartott interakció-gomb -> ütések -> drop az inventoryba, újranövés a játékidővel
 for (const [type, def] of Object.entries(nodeInteractables(nodes))) defineInteractable(interact, type, def); // akció: 'gather'
 const stations = createStationSystem();       // S041: felállítható craft-állomások (munkapad, kemence, főzőhely): ütköző, 'use' célpont, TAG a közelben álló játékosnak (a mentés az S050-ben)
 addProvider(interact, stationProvider(stations));
@@ -168,6 +175,7 @@ const tc = new TetherConfig();                 // hangolható póráz-értékek 
 // S027: a split-view továbbra is L_normal-t kap; a póráz L_eff-je a mezőből jön.
 const sysCfg = tc.systemConfig({ walls, field });
 sysCfg.L = fieldL(field, () => tc.lNormal());
+sysCfg.terrain = raceTerrain(charReg); // S053: erdei mozgás (a terep-fajtát az S120/S151 adja); alap szorzó 1
 const tether = createTetherSystem(sysCfg);
 const camCfg = tc.cameraConfig();
 bindTetherConfigKeys(tc);
