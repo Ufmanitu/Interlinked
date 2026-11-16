@@ -19,6 +19,11 @@ import { WORLD_SEED, createWorldStream, warmStream, updateStream, streamWalls, f
 import { createChunkRenderer, drawChunks } from './render-chunks.js';
 import { createObjectStore, syncObjects, objectColliders, objectCount } from './world-objects.js';
 import { createObjectSprites, drawYSorted, drawNodeBars, drawGroundItems } from './render-objects.js';
+import { STATION_TEXTS } from './data-stations.js';
+import { RECIPE_DEFS } from './data-recipes.js';
+import { createRecipeRegistry, getRecipe, craft } from './game-crafting.js';
+import { createStationSystem, stationColliders, stationProvider, stepPlaceInput, stationCtx } from './game-stations.js';
+import { createStationSprites, visibleStations, drawStation } from './render-stations.js';
 import { createGroundItems, stepGround, stepDropInput, dropItem } from './game-grounditems.js';
 import { createInteractSystem, addObjectSource, addProvider, onInteract, stepInteraction, defineInteractable, targetOf } from './game-interact.js';
 import { drawInteractPrompts, INTERACT_TEXT } from './render-interact.js';
@@ -42,7 +47,9 @@ registerTexts(SAVE_TEXTS, 'save.');           // S032: mentés-szövegek (HU/EN)
 registerTexts(ITEM_TEXTS, ITEM_TEXT_PREFIX);  // S035: tárgy-nevek (item.<id>)
 registerTexts(INVUI_TEXTS, 'inv.');           // S035: inventory UI szövegek (inv.*)
 registerTexts(WALLET_TEXTS, 'wallet.');       // S036: pénz-szövegek (wallet.*)
+registerTexts(STATION_TEXTS, '');             // S041: obj.<állomás>, act.use
 registerTexts(NODE_TEXTS, '');                // S037: obj.herb, act.gather
+for (const l of ['hu', 'en']) for (const k of Object.keys(STATION_TEXTS[l])) if (k.startsWith('act.')) INTERACT_TEXT[l][k] = STATION_TEXTS[l][k];
 for (const l of ['hu', 'en']) for (const k of Object.keys(NODE_TEXTS[l])) if (k.startsWith('act.')) INTERACT_TEXT[l][k] = NODE_TEXTS[l][k]; // a prompt még az ideiglenes INTERACT_TEXT-ből olvas
 
 export const STEP = 1 / 60; // fix 60 Hz logikai lépés
@@ -75,6 +82,10 @@ const interact = createInteractSystem();     // S016: interakciós zóna, célpo
 addObjectSource(interact, objects);
 const nodes = createNodeSystem(objects, { seed: WORLD_SEED }); // S037: gyűjthető node-ok (fa, kő, gyógynövény): tartott interakció-gomb -> ütések -> drop az inventoryba, újranövés a játékidővel
 for (const [type, def] of Object.entries(nodeInteractables(nodes))) defineInteractable(interact, type, def); // akció: 'gather'
+const stations = createStationSystem();       // S041: felállítható craft-állomások (munkapad, kemence, főzőhely): ütköző, 'use' célpont, TAG a közelben álló játékosnak (a mentés az S050-ben)
+addProvider(interact, stationProvider(stations));
+const stationSprites = createStationSprites(stations.reg);
+const recipes = createRecipeRegistry(RECIPE_DEFS, inventories[0].reg); // S041: a craft-UI az S042-ben; addig a window.__game.craft(i, recept, db)
 const warp = createWarpSystem({ anchor: spot }); // S017: kinti házak + beltér-zsebek (data-warps.js); páros be-/kilépés
 addProvider(interact, warpProvider(warp));
 onInteract(interact, ev => {
@@ -96,12 +107,13 @@ let ringA = 0;                                   // a határ-gyűrű alfája (k�
 const walls = [];                              // helyben frissítjük (a póráz-rendszer ugyanezt a tömböt olvassa)
 let wallsKey = '';
 function refreshWalls() {
-  const key = world.version + '|' + objects.version;
+  const key = world.version + '|' + objects.version + '|' + stations.version;
   if (key === wallsKey) return;
   wallsKey = key;
   walls.length = 0;
   for (const r of streamWalls(world)) walls.push(r);
   for (const r of objectColliders(objects)) walls.push(r);
+  stationColliders(stations, walls); // S041: a lerakott állomások talpa
   warpColliders(warp, walls); // házak, zseb-falak, ütköző bútorok
   walls.push(sorskoCollider(sorsko)); // a Sorskő talpa
 }
@@ -118,7 +130,7 @@ bindTetherConfigKeys(tc);
 snapSplitView(split, players, tc.lNormal()); // induláskor az összeolvadás állapota a játékosok távolságából
 bindLangKeys(i18n, window);                    // S019: F8 = nyelvváltás HU/EN (az S107 menü átveszi)
 const vis = createTetherVisual();              // a fonal megjelenített állapota; vis.on(fn): szint-események (hanghoz)
-const game = { time: 0, ticks: 0, fps: 0, players, inventories, wallets, ground, camera, split, tether, walls, world, objects, interact, warp, clock, field, sorsko, menus, invUi, nodes };
+const game = { stations, time: 0, ticks: 0, fps: 0, players, inventories, wallets, ground, camera, split, tether, walls, world, objects, interact, warp, clock, field, sorsko, menus, invUi, nodes };
 // S032: mentés (F2 mentés, F3 betöltés, F4 export vágólapra, F7 import beillesztéssel; az S049 menü átveszi). A mentett állapot: játékos-pozíciók, seed, GameClock, Sorskő-szint.
 function afterLoad() {
   camera.x = (players[0].x + players[1].x) / 2; // a kamera, a nézetek és a chunkok a betöltött helyhez ugranak
@@ -147,7 +159,8 @@ function update(dt) {
   const raw = [input.get(0), input.get(1)];
   const inputs = stepMenus(menus, raw); // nyitott menünél a karakter áll (nincs mozgás/interakció), de a pórázon húzható
   stepDropInput(ground, invUi, menus, raw, game.inventories, game.players); // S039: eldobás a stepInvUi ELŐTT (a fogás/kijelölés állapota még a régi)
-  stepInvUi(invUi, menus, raw, game.inventories, dt); // S035: az inventory UI a NYERS bemenetet kapja (a szűrt nyitva nullázott)
+  const placed = stepPlaceInput(stations, invUi, menus, raw, game.inventories, game.players, [interact.players[0] && interact.players[0].facing, interact.players[1] && interact.players[1].facing], walls); // S041: felállítás (menü nyitva, 1. képesség a kurzor alatti állomás-tárgyon); a gombnyomást elnyeli
+  stepInvUi(invUi, menus, placed.raws, game.inventories, dt); // S035: az inventory UI a NYERS bemenetet kapja (a szűrt nyitva nullázott)
   stepGround(ground, game.players, game.inventories, dt, walls); // S039: dobás-mozgás, mágnes-felvétel, összevonás, eltűnés (a teher-szinkron ELŐTT)
   syncEncumbrance(game.players, game.inventories); // a teher (p.load a k-hookba, p.speedMul a saját sebességbe) a póráz-lépés előtt
   stepTetherSystem(tether, game.players, inputs, dt);
@@ -203,6 +216,7 @@ function drawTetherHud(ctx, x, y) {
 
 function drawEntity(ctx, e, ox, oy) {
   if (e.warp) drawHouse(ctx, e.warp, ox, oy);
+  else if (e.station) drawStation(ctx, stationSprites, e, ox, oy);
   else if (e.sorsko) drawSorsko(ctx, sorskoSprites, e.sorsko, ox, oy);
   else drawPlayer(ctx, e, ox, oy);
 }
@@ -223,6 +237,7 @@ function renderView(ctx, o, vw, vh, ci) {
   for (const p of game.players) drawList.push(p);
   visibleHouses(warp, o.x, o.y, vw, vh, drawList);
   visibleSorsko(sorsko, o.x, o.y, vw, vh, drawList);
+  visibleStations(stations, o.x, o.y, vw, vh, drawList); // S041
   drawYSorted(ctx, objSprites, objects, drawList, o.x, o.y, vw, vh, drawEntity);
   drawDayNight(ctx, dn, ci.minuteOfDay, vw, vh); // a promptok a színezés fölé kerülnek
   drawInteractPrompts(ctx, interact, o.x, o.y, vw, vh, { debug: tc.hud, lang: currentLang() }); // promptok a tárgyak fölött, zónák a debug HUD-dal
@@ -279,4 +294,4 @@ function frame(now) {
 }
 requestAnimationFrame(frame);
 
-window.__game = { game, split, splitRend, input, screen, tether, tc, vis, world, atlas, chunkRend, objects, objSprites, interact, warp, clock, dn, field, sorsko, menus, saveCtl, invUi, inventories, wallets, nodes, ground, drop: (i, id, n = 1) => dropItem(ground, id, n, players[i].x + 48, players[i].y, { toss: true }), give: (i, id, n = 1) => addItem(inventories[i], id, n), pay: (i, n = 1) => deposit(wallets[i], n) }; // give: fejlesztői segéd (a node-ok S037-ben bekötve; a földre dobott tárgy felvétele az S039-ben jön)
+window.__game = { stations, craft: (i, id, n = 1) => craft(inventories[i], getRecipe(recipes, id), stationCtx(stations, players[i]), n), game, split, splitRend, input, screen, tether, tc, vis, world, atlas, chunkRend, objects, objSprites, interact, warp, clock, dn, field, sorsko, menus, saveCtl, invUi, inventories, wallets, nodes, ground, drop: (i, id, n = 1) => dropItem(ground, id, n, players[i].x + 48, players[i].y, { toss: true }), give: (i, id, n = 1) => addItem(inventories[i], id, n), pay: (i, n = 1) => deposit(wallets[i], n) }; // give: fejlesztői segéd (a node-ok S037-ben bekötve; a földre dobott tárgy felvétele az S039-ben jön)

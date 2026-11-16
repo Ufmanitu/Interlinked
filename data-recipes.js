@@ -9,4 +9,8 @@ export const RECIPE_DEFS = [
   { id: 'axe',     inputs: [{ item: 'wood', n: 2 }, { item: 'stone', n: 2 }, { item: 'fiber', n: 2 }], output: { item: 'axe', n: 1 },     station: null, skill: null },
   { id: 'pickaxe', inputs: [{ item: 'wood', n: 2 }, { item: 'stone', n: 3 }, { item: 'fiber', n: 2 }], output: { item: 'pickaxe', n: 1 }, station: null, skill: null },
   { id: 'sickle',  inputs: [{ item: 'wood', n: 1 }, { item: 'stone', n: 1 }, { item: 'fiber', n: 3 }], output: { item: 'sickle', n: 1 },  station: null, skill: null },
+  // S041 állomások: a munkapad és a főzőhely kézzel készül, a kemencéhez munkapad kell (a közelben álló állomás-TAG-et a game-stations.js adja a ctx-be)
+  { id: 'workbench', inputs: [{ item: 'wood', n: 6 }, { item: 'stone', n: 2 }, { item: 'fiber', n: 4 }], output: { item: 'workbench', n: 1 }, station: null, skill: null },
+  { id: 'cookfire',  inputs: [{ item: 'wood', n: 3 }, { item: 'stone', n: 4 }],                          output: { item: 'cookfire', n: 1 },  station: null, skill: null },
+  { id: 'furnace',   inputs: [{ item: 'stone', n: 10 }, { item: 'wood', n: 4 }],                         output: { item: 'furnace', n: 1 },   station: 'MUNKAPAD', skill: null },
 ];

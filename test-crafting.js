@@ -113,9 +113,9 @@ test('crafting: maxCraftable (hozzávaló és hely korlátoz, maxBatch fölé ne
 });
 test('crafting: recipesAt + craftList (állomás szerint, állapottal)', () => {
   const extra = createRecipeRegistry([...RECIPE_DEFS, R({ id: 'zz', station: 'KEMENCE' }), R({ id: 'aa', station: 'KEMENCE' })], IREG);
-  eq(recipesAt(extra, null).length, 4); eq(recipesAt(extra).length, 4); eq(recipesAt(extra, 'KEMENCE').map(r => r.id).join(), 'aa,zz'); eq(recipesAt(extra, 'MUNKAPAD').length, 0); eq(recipesAt(null).length, 0);
+  const hand = RECIPE_DEFS.filter(d => !d.station).length; eq(recipesAt(extra, null).length, hand); eq(recipesAt(extra).length, hand); eq(recipesAt(extra, 'KEMENCE').map(r => r.id).join(), 'aa,zz'); eq(recipesAt(extra, 'MUNKAPAD').map(r => r.id).join(), 'furnace'); eq(recipesAt(null).length, 0);
   const v = inv(); addItem(v, 'wood', 1); addItem(v, 'fiber', 1);
-  const l = craftList(extra, v, null, null); eq(l.length, 4);
+  const l = craftList(extra, v, null, null); eq(l.length, hand);
   const t = l.find(x => x.recipe.id === 'torch'); eq(t.craftable, true); eq(t.max, 1); const a = l.find(x => x.recipe.id === 'axe'); eq(a.craftable, false); eq(a.reason, 'items'); eq(a.max, 0); assert(a.missing.length > 0);
   eq(craftList(extra, v, null, 'KEMENCE').every(x => x.reason === 'station'), true);
 });

@@ -13,6 +13,7 @@ const MODULES = [
   './game-splitview.js', './render-split.js', './game-field.js', './game-sorsko.js', './render-sorsko.js',
   './data-items.js', './game-inventory.js', './game-encumbrance.js', // S033/S034
   './data-recipes.js', './game-crafting.js', // S040
+  './data-stations.js', './game-stations.js', './render-stations.js', // S041
 ];
 const FRAMES = 600;
 const DT = 1 / 60;
