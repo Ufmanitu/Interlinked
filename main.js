@@ -12,7 +12,7 @@ import { WALLET_TEXTS, createPlayerWallets, deposit } from './game-wallet.js';
 import { createCamera, stepCamera, cameraOffset } from './game-camera.js';
 import { createTetherSystem, stepTetherSystem } from './tether-system.js';
 import { TetherConfig, bindTetherConfigKeys, tetherHudLines, HUD_TEXT } from './tether-config.js';
-import { i18n, currentLang, bindLangKeys, registerTexts, t } from './i18n.js';
+import { i18n, currentLang, changeLang, bindLangKeys, registerTexts, t } from './i18n.js';
 import { createTetherVisual, stepTetherVisual, tetherCurve, tetherStyle } from './tether-visual.js';
 import { createTileAtlas } from './render-tiles.js';
 import { WORLD_SEED, createWorldStream, warmStream, updateStream, streamWalls, findOpenSpot } from './world-stream.js';
@@ -37,7 +37,9 @@ import { workMul } from './game-stamina.js'; // S048
 import { createNodeSystem, stepNodes, nodeInteractables, onNode, gatherView } from './game-nodes.js';
 import { SKILL_TEXTS, createSkillSystem, connectSkills, skillsOf, onSkill } from './game-skills.js';
 import { PROG_TEXTS, createProgression, connectProgression, onProgress } from './game-curve.js';
-import { ACTLOG_TEXTS, createActLog, loadActLog, stepActLog, connectActLog, classifyActivity, bindActLogKeys } from './game-actlog.js';
+import { ACTLOG_TEXTS, createActLog, loadActLog, stepActLog, connectActLog, classifyActivity, bindActLogKeys, exportActLogText, saveActLog } from './game-actlog.js';
+import { MENU_TEXTS, createMenuUi, routeMenuInputs, applyMenuClose, stepMenuUi, menuTabActive, maskMenus } from './game-menu.js'; // S049
+import { drawMenuPanels } from './render-menu.js'; // S049
 import { createWarpSystem, warpProvider, warpColliders, handleWarpEvent, stepWarp, streamPoints, warpWhere } from './world-warp.js';
 import { visibleHouses, drawHouse, drawPockets } from './render-warp.js';
 import { createGameClock, stepClock, clockInfo, bindClockKeys } from './game-clock.js';
@@ -63,6 +65,7 @@ registerTexts(SKILL_TEXTS, 'skill.');         // S045: skill-nevek, szintlépés
 registerTexts(TRADEUI_TEXTS, 'trade.');       // S044: trade UI szövegek (trade.*)
 registerTexts(PROG_TEXTS, 'prog.');           // S047: szint-szövegek (prog.*)
 registerTexts(ACTLOG_TEXTS, 'actlog.');       // S047: napló-export szövegek (actlog.*)
+registerTexts(MENU_TEXTS, 'menu.');           // S049: menü-fülek (térkép, beállítások) szövegei (menu.*)
 for (const l of ['hu', 'en']) for (const k of Object.keys(STATION_TEXTS[l])) if (k.startsWith('act.')) INTERACT_TEXT[l][k] = STATION_TEXTS[l][k];
 for (const l of ['hu', 'en']) for (const k of Object.keys(NODE_TEXTS[l])) if (k.startsWith('act.')) INTERACT_TEXT[l][k] = NODE_TEXTS[l][k]; // a prompt még az ideiglenes INTERACT_TEXT-ből olvas
 
@@ -118,7 +121,7 @@ if (logStore) loadActLog(actlog); // a korábbi ülések naplója folytatódik (
 connectActLog(actlog, { skill: fn => onSkill(skills, fn), node: fn => onNode(nodes, fn), craft: fn => onCraft(craftUi, fn), prog: fn => onProgress(prog, fn), time: () => clock.t });
 function activityOf(i) { // a játékos jelenlegi tevékenysége a napló számára
   const open = menuOpen(menus, i);
-  const tab = !open ? null : tradeTabActive(tradeUi, trade, menus, i) ? 'trade' : craftTabActive(craftUi, menus, i) ? 'craft' : 'inv';
+  const tab = !open || menuTabActive(menuUi, menus, i) ? null : tradeTabActive(tradeUi, trade, menus, i) ? 'trade' : craftTabActive(craftUi, menus, i) ? 'craft' : 'inv';
   const p = game.players[i];
   return classifyActivity({ tab, menuOpen: open, gathering: gatherView(nodes, i) != null, moving: !!p && Math.abs(p.vx || 0) + Math.abs(p.vy || 0) > 1 });
 }
@@ -171,7 +174,7 @@ bindTetherConfigKeys(tc);
 snapSplitView(split, players, tc.lNormal()); // induláskor az összeolvadás állapota a játékosok távolságából
 bindLangKeys(i18n, window);                    // S019: F8 = nyelvváltás HU/EN (az S107 menü átveszi)
 const vis = createTetherVisual();              // a fonal megjelenített állapota; vis.on(fn): szint-események (hanghoz)
-const game = { prog, actlog, skills, craftUi, tradeUi, trade, stations, time: 0, ticks: 0, fps: 0, players, inventories, wallets, ground, camera, split, tether, walls, world, objects, interact, warp, clock, field, sorsko, menus, invUi, nodes };
+const game = { menuUi, prog, actlog, skills, craftUi, tradeUi, trade, stations, time: 0, ticks: 0, fps: 0, players, inventories, wallets, ground, camera, split, tether, walls, world, objects, interact, warp, clock, field, sorsko, menus, invUi, nodes };
 // S032: mentés (F2 mentés, F3 betöltés, F4 export vágólapra, F7 import beillesztéssel; az S049 menü átveszi). A mentett állapot: játékos-pozíciók, seed, GameClock, Sorskő-szint.
 function afterLoad() {
   camera.x = (players[0].x + players[1].x) / 2; // a kamera, a nézetek és a chunkok a betöltött helyhez ugranak
@@ -187,6 +190,16 @@ const saveCtl = createSaveController({ players, clock, sorsko, seed: WORLD_SEED 
 });
 bindSaveKeys(saveCtl);
 bindActLogKeys(actlog, { copy: copyText, tr: (k, p) => t('actlog.' + k, p) }, window); // S047: F6 napló-export
+// S049: egységes menükezelő: a menü gomb körforgása inventory -> craft -> trade -> térkép -> beállítások -> zár; a beállítások-fül gombjai a meglévő F-billentyűs funkciókat hívják
+const bg = p => { try { Promise.resolve(p).catch(e => { menuUi.lastError = e; }); } catch (e) { menuUi.lastError = e; } };
+const menuUi = createMenuUi({ actions: {
+  lang: () => changeLang(currentLang() === 'hu' ? 'en' : 'hu'),
+  save: () => bg(saveCtl.saveNow()),
+  load: () => bg(saveCtl.loadNow()),
+  export: () => bg(saveCtl.exportNow()),
+  import: () => bg(saveCtl.importNow()),
+  log: () => { saveActLog(actlog); copyText(exportActLogText(actlog, (k, p) => t('actlog.' + k, p))); },
+} });
 const drawList = [];                           // y-sort lista: játékosok + látható házak
 
 function update(dt) {
@@ -199,13 +212,15 @@ function update(dt) {
   syncObjects(objects, world);
   refreshWalls(); // a betöltött chunkok/objektumok változtak -> falak újraépítése (ugyanabban a tömbben)
   const raw = [input.get(0), input.get(1)];
-  const route = routeCraftInputs(craftUi, menus, routeTradeInputs(tradeUi, trade, craftUi, menus, raw)); // S042: menü-fül körforgás (inventory -> craft -> zár); a craft fülön az inventory-rendszerek üres bemenetet kapnak
+  const mroute = routeMenuInputs(menuUi, tradeUi, craftUi, trade, menus, raw); // S049: a trade fül utáni két fül (térkép, beállítások) és a zárás; az extra fülön a lánc üres bemenetet kap
+  const route = applyMenuClose(menuUi, routeCraftInputs(craftUi, menus, routeTradeInputs(tradeUi, trade, craftUi, menus, mroute.raws))); // S042: menü-fül körforgás (inventory -> craft -> zár); a craft fülön az inventory-rendszerek üres bemenetet kapnak
   const inputs = stepMenus(menus, route.menu); // nyitott menünél a karakter áll (nincs mozgás/interakció), de a pórázon húzható
   stepDropInput(ground, invUi, menus, route.inv, game.inventories, game.players); // S039: eldobás a stepInvUi ELŐTT (a fogás/kijelölés állapota még a régi)
   const placed = stepPlaceInput(stations, invUi, menus, route.inv, game.inventories, game.players, [interact.players[0] && interact.players[0].facing, interact.players[1] && interact.players[1].facing], walls); // S041: felállítás (menü nyitva, 1. képesség a kurzor alatti állomás-tárgyon); a gombnyomást elnyeli
   stepInvUi(invUi, menus, placed.raws, game.inventories, dt); // S035: az inventory UI a NYERS bemenetet kapja (a szűrt nyitva nullázott)
   stepTradeUi(tradeUi, trade, tradeCtx, menus, raw, dt); // S044: trade UI (kérés, két kurzor, elfogad/megerősít); a stepTrade ELŐTT
   stepTrade(trade, tradeCtx, dt); // S044: távolság-ellenőrzés, kérés-időtúllépés, elfogyó tárgy levágása
+  stepMenuUi(menuUi, menus, raw, dt); // S049: beállítások-fül (kurzor, akciók); a NYERS bemenettel
   stepCraftUi(craftUi, menus, raw, game.inventories, dt); // S042: craft fül (a stepMenus UTÁN, a teher-szinkron ELŐTT; a NYERS bemenettel)
   stepGround(ground, game.players, game.inventories, dt, walls); // S039: dobás-mozgás, mágnes-felvétel, összevonás, eltűnés (a teher-szinkron ELŐTT)
   syncEncumbrance(game.players, game.inventories); // a teher (p.load a k-hookba, p.speedMul a saját sebességbe) a póráz-lépés előtt
@@ -307,12 +322,13 @@ function render() {
   ctx.fillStyle = '#9fb4d0';
   ctx.fillText(`Interlinked ${VERSION} (${VERSION_DATE})  FPS ${game.fps.toFixed(0)}  chunk ${world.chunks.size}/${chunkRend.cache.size}  obj ${objectCount(objects)}  nod ${nodes.depleted.size}  gnd ${ground.items.length}  int ${interact.total}  warp ${warpWhere(warp, game.players) || '-'}  mrg ${mergeBlend(split).toFixed(2)}  vch ${warpWhere(warp, game.players) ? 0 : missingViewChunks(world, offs, split.layout)}`, 8, 8);
   drawClockLabel(ctx, clockLabel(ci, currentLang(), clock.speed), VIRTUAL_W);
-  const hudMenus = tradeMenus(tradeUi, trade, menus); // S044: a trade fülön / nyitott trade-ben a menü-váz nem látszik
+  const hudMenus = maskMenus(menuUi, tradeMenus(tradeUi, trade, menus)); // S044: a trade fülön / nyitott trade-ben a menü-váz nem látszik
   drawHud(ctx, game.players, hudMenus, VIRTUAL_W, VIRTUAL_H, undefined, undefined, game.wallets); // S036: + pénz; S029: játékosonkénti HUD az alsó sarkokban (a nézetek és a színezés fölött)
-  drawInventories(ctx, game.players, game.inventories, invUi, tradeMenus(tradeUi, trade, invMenus(craftUi, menus)), VIRTUAL_W, VIRTUAL_H); // S035: a nyitott menü inventory-panelje (a menü-vázat eltakarja); S042: a craft fülön lévő játékosnál nem
+  drawInventories(ctx, game.players, game.inventories, invUi, maskMenus(menuUi, tradeMenus(tradeUi, trade, invMenus(craftUi, menus))), VIRTUAL_W, VIRTUAL_H); // S035: a nyitott menü inventory-panelje (a menü-vázat eltakarja); S042: a craft fülön lévő játékosnál nem
   drawCraftPanels(ctx, craftUi, hudMenus, game.players, VIRTUAL_W, VIRTUAL_H);
   drawTradeTabs(ctx, tradeUi, trade, tradeCtx, menus, game.players, VIRTUAL_W, VIRTUAL_H); // S044: trade fül (a menü-sarokban)
   drawTradeOverlay(ctx, tradeUi, trade, tradeCtx, VIRTUAL_W, VIRTUAL_H); // S044: kérés-sáv, a két trade-panel, üzenet // S042: craft-panel (a craft fülön)
+  drawMenuPanels(ctx, menuUi, menus, game.players, VIRTUAL_W, VIRTUAL_H); // S049: térkép- és beállítások-fül
   if (tc.hud) drawTetherHud(ctx, 8, 28);
   if (saveCtl.toast) drawSaveToast(ctx, saveCtl.toast);
 }
@@ -346,4 +362,4 @@ function frame(now) {
 }
 requestAnimationFrame(frame);
 
-window.__game = { prog, actlog, skills, craftUi, tradeUi, trade, stations, craft: (i, id, n = 1) => craft(inventories[i], getRecipe(recipes, id), stationCtx(stations, players[i], skillsOf(skills, i)), n), game, split, splitRend, input, screen, tether, tc, vis, world, atlas, chunkRend, objects, objSprites, interact, warp, clock, dn, field, sorsko, menus, saveCtl, invUi, inventories, wallets, nodes, ground, drop: (i, id, n = 1) => dropItem(ground, id, n, players[i].x + 48, players[i].y, { toss: true }), give: (i, id, n = 1) => addItem(inventories[i], id, n), pay: (i, n = 1) => deposit(wallets[i], n) }; // give: fejlesztői segéd (a node-ok S037-ben bekötve; a földre dobott tárgy felvétele az S039-ben jön)
+window.__game = { menuUi, prog, actlog, skills, craftUi, tradeUi, trade, stations, craft: (i, id, n = 1) => craft(inventories[i], getRecipe(recipes, id), stationCtx(stations, players[i], skillsOf(skills, i)), n), game, split, splitRend, input, screen, tether, tc, vis, world, atlas, chunkRend, objects, objSprites, interact, warp, clock, dn, field, sorsko, menus, saveCtl, invUi, inventories, wallets, nodes, ground, drop: (i, id, n = 1) => dropItem(ground, id, n, players[i].x + 48, players[i].y, { toss: true }), give: (i, id, n = 1) => addItem(inventories[i], id, n), pay: (i, n = 1) => deposit(wallets[i], n) }; // give: fejlesztői segéd (a node-ok S037-ben bekötve; a földre dobott tárgy felvétele az S039-ben jön)
