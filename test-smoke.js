@@ -12,6 +12,7 @@ const MODULES = [
   './i18n.js', './data-text.js', './data-macro.js', './world-macro.js', './world-sprite.js', './render-sprite.js', './data-sprites.js',
   './game-splitview.js', './render-split.js', './game-field.js', './game-sorsko.js', './render-sorsko.js',
   './data-items.js', './game-inventory.js', './game-encumbrance.js', // S033/S034
+  './data-recipes.js', './game-crafting.js', // S040
 ];
 const FRAMES = 600;
 const DT = 1 / 60;
