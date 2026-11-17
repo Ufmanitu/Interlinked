@@ -18,6 +18,8 @@ export const ITEM_DEFS = [
   { id: 'axe',     stack: 1, weight: 2.5, value: 12, tags: ['ESZKÖZ'], tool: { tag: 'FEJSZE',  tier: 1, speed: 2.5, power: 1 } },
   { id: 'pickaxe', stack: 1, weight: 3,   value: 14, tags: ['ESZKÖZ'], tool: { tag: 'CSÁKÁNY', tier: 1, speed: 2.5, power: 1 } },
   { id: 'sickle',  stack: 1, weight: 0.8, value: 8,  tags: ['ESZKÖZ'], tool: { tag: 'SARLÓ',   tier: 1, speed: 2.5, power: 1 } },
+  // S060 kötél: kasztfüggetlen KÖTÉL-tag forrás (a ranger kötélvetése ugyanezt a tag-et adja); az átkelők (S130) és a mászás (S150) használják
+  { id: 'rope',    stack: 5, weight: 1.2, value: 9,  tags: ['ESZKÖZ', 'KÖTÉL'] },
   // S041 felállítható craft-állomások (a data-stations.js STATION_DEFS hivatkozik rájuk; a súly a hordásnál számít)
   { id: 'workbench', stack: 1, weight: 20, value: 20, tags: ['ÁLLOMÁS'] },
   { id: 'furnace',   stack: 1, weight: 30, value: 24, tags: ['ÁLLOMÁS'] },
@@ -25,8 +27,8 @@ export const ITEM_DEFS = [
 ];
 
 export const ITEM_TEXTS = {
-  hu: { wood: 'Fa', stone: 'Kő', fiber: 'Rost', herb: 'Gyógynövény', torch: 'Fáklya', shard: 'Sorsszilánk', axe: 'Fejsze', pickaxe: 'Csákány', sickle: 'Sarló', workbench: 'Munkapad', furnace: 'Kemence', cookfire: 'Főzőhely' },
-  en: { wood: 'Wood', stone: 'Stone', fiber: 'Fiber', herb: 'Herb', torch: 'Torch', shard: 'Fate Shard', axe: 'Axe', pickaxe: 'Pickaxe', sickle: 'Sickle', workbench: 'Workbench', furnace: 'Furnace', cookfire: 'Cooking fire' },
+  hu: { wood: 'Fa', stone: 'Kő', fiber: 'Rost', herb: 'Gyógynövény', torch: 'Fáklya', shard: 'Sorsszilánk', axe: 'Fejsze', pickaxe: 'Csákány', sickle: 'Sarló', rope: 'Kötél', workbench: 'Munkapad', furnace: 'Kemence', cookfire: 'Főzőhely' },
+  en: { wood: 'Wood', stone: 'Stone', fiber: 'Fiber', herb: 'Herb', torch: 'Torch', shard: 'Fate Shard', axe: 'Axe', pickaxe: 'Pickaxe', sickle: 'Sickle', rope: 'Rope', workbench: 'Workbench', furnace: 'Furnace', cookfire: 'Cooking fire' },
 };
 
 const ID_RE = /^[a-z][a-z0-9_]*$/;

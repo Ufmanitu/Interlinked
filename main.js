@@ -36,8 +36,10 @@ import { NODE_TEXTS, HERB_CHANCE } from './data-nodes.js';
 import { workMul } from './game-stamina.js'; // S048
 import { CHARACTER_TEXTS } from './data-character.js'; // S053
 import { createCharacterRegistry } from './game-registry.js';
-import { applyRace, gatherSpeedMul, raceTerrain } from './game-race.js';
+import { applyRace, gatherSpeedMul, raceTerrain, raceOf } from './game-race.js';
 import { createAbilitySystem, stepAbilities } from './game-ability.js'; // S054
+import { OBSTACLE_TEXTS } from './data-obstacles.js'; // S060
+import { createObstacleSystem, obstacleColliders, obstacleProvider, stepObstacles, obstacleView } from './game-obstacle.js'; // S060: tag-akadályok (eszköz-használat: fejsze kivág, fáklya/sötétlátás nyit)
 import { createNodeSystem, stepNodes, nodeInteractables, onNode, gatherView } from './game-nodes.js';
 import { SKILL_TEXTS, createSkillSystem, connectSkills, skillsOf, onSkill } from './game-skills.js';
 import { PROG_TEXTS, createProgression, connectProgression, onProgress } from './game-curve.js';
@@ -70,6 +72,8 @@ registerTexts(TRADEUI_TEXTS, 'trade.');       // S044: trade UI szövegek (trade
 registerTexts(PROG_TEXTS, 'prog.');           // S047: szint-szövegek (prog.*)
 registerTexts(ACTLOG_TEXTS, 'actlog.');       // S047: napló-export szövegek (actlog.*)
 registerTexts(MENU_TEXTS, 'menu.');           // S049: menü-fülek (térkép, beállítások) szövegei (menu.*)
+registerTexts(OBSTACLE_TEXTS, '');            // S060: obstacle.<id>, obstacle.tag.<TAG>, act.clear
+for (const l of ['hu', 'en']) for (const k of Object.keys(OBSTACLE_TEXTS[l])) if (k.startsWith('act.')) INTERACT_TEXT[l][k] = OBSTACLE_TEXTS[l][k]; // S060: a prompt az ideiglenes INTERACT_TEXT-ből olvas
 for (const l of ['hu', 'en']) for (const k of Object.keys(STATION_TEXTS[l])) if (k.startsWith('act.')) INTERACT_TEXT[l][k] = STATION_TEXTS[l][k];
 for (const l of ['hu', 'en']) for (const k of Object.keys(NODE_TEXTS[l])) if (k.startsWith('act.')) INTERACT_TEXT[l][k] = NODE_TEXTS[l][k]; // a prompt még az ideiglenes INTERACT_TEXT-ből olvas
 
@@ -111,6 +115,9 @@ for (const [type, def] of Object.entries(nodeInteractables(nodes))) defineIntera
 const stations = createStationSystem();       // S041: felállítható craft-állomások (munkapad, kemence, főzőhely): ütköző, 'use' célpont, TAG a közelben álló játékosnak (a mentés az S050-ben)
 addProvider(interact, stationProvider(stations));
 const stationSprites = createStationSprites(stations.reg);
+const obstacles = createObstacleSystem(undefined, { anchor: spot }); // S060: IDEIGLENES példa-akadályok a kezdőhely két oldalán (S097/S098 adja a valódi helyet); a mentés még nincs kötve (feloldás: obstacleState/restoreObstacles)
+addProvider(interact, obstacleProvider(obstacles));
+const tagsOf = i => { const r = raceOf(charReg, players[i]); return r ? r.tags : []; }; // faj-tag-ek (SÖTÉTLÁTÁS...); a tárgy-tag-eket (FÁKLYA, FEJSZE) a stepObstacles az inventoryból olvassa
 const recipes = createRecipeRegistry(RECIPE_DEFS, inventories[0].reg); // S041: receptek (a window.__game.craft(i, recept, db) fejlesztői segéd megmaradt)
 // S042: craft UI = a játékos menüjének 2. füle (menü gomb: inventory -> craft -> zár); az állomás 'use' interakciója a craft fülön nyitja a menüt.
 // Lista: kézzel craftolható + a közeli állomások (stationCtx) receptjei; az állomás neve az 'obj.<id>' szövegből.
@@ -160,13 +167,14 @@ let ringA = 0;                                   // a határ-gyűrű alfája (k�
 const walls = [];                              // helyben frissítjük (a póráz-rendszer ugyanezt a tömböt olvassa)
 let wallsKey = '';
 function refreshWalls() {
-  const key = world.version + '|' + objects.version + '|' + stations.version;
+  const key = world.version + '|' + objects.version + '|' + stations.version + '|' + obstacles.version;
   if (key === wallsKey) return;
   wallsKey = key;
   walls.length = 0;
   for (const r of streamWalls(world)) walls.push(r);
   for (const r of objectColliders(objects)) walls.push(r);
   stationColliders(stations, walls); // S041: a lerakott állomások talpa
+  obstacleColliders(obstacles, walls); // S060: az el nem hárított akadályok (zárt sötét átjáró, bozót)
   warpColliders(warp, walls); // házak, zseb-falak, ütköző bútorok
   walls.push(sorskoCollider(sorsko)); // a Sorskő talpa
 }
@@ -210,7 +218,7 @@ const menuUi = createMenuUi({ actions: {
   import: () => bg(runSaveAction(saveCtl, 'import')),
   log: () => { saveActLog(actlog); copyText(exportActLogText(actlog, (k, p) => t('actlog.' + k, p))); },
 } });
-const game = { abilities, menuUi, prog, actlog, skills, craftUi, tradeUi, trade, stations, time: 0, ticks: 0, fps: 0, players, inventories, wallets, ground, camera, split, tether, walls, world, objects, interact, warp, clock, field, sorsko, menus, invUi, nodes };
+const game = { obstacles, abilities, menuUi, prog, actlog, skills, craftUi, tradeUi, trade, stations, time: 0, ticks: 0, fps: 0, players, inventories, wallets, ground, camera, split, tether, walls, world, objects, interact, warp, clock, field, sorsko, menus, invUi, nodes };
 const drawList = [];                           // y-sort lista: játékosok + látható házak
 
 function update(dt) {
@@ -239,6 +247,7 @@ function update(dt) {
   stepInteraction(interact, game.players, inputs, dt); // a mozgás után: a zóna a végleges pozícióhoz igazodik
   stepAbilities(abilities, game.players, inputs, [interact.players[0] && interact.players[0].facing, interact.players[1] && interact.players[1].facing], dt, { inventories: game.inventories }); // S054: képesség-gombok (a SZŰRT bemenet: nyitott menünél nincs használat)
   stepNodes(nodes, game.players, inputs, [targetOf(interact, 0), targetOf(interact, 1)], game.inventories, clock.t, dt); // S037: gyűjtés (a SZŰRT bemenet: nyitott menünél nincs interakció)
+  stepObstacles(obstacles, dt, { players: game.players, inventories: game.inventories, inputs, targets: [targetOf(interact, 0), targetOf(interact, 1)], tagsOf }); // S060: kivágás (tartott gomb, fejsze) és sötét átjáró (fáklya/sötétlátás); a SZŰRT bemenettel
   game.players.forEach((p, i) => { p.gathering = gatherView(nodes, i) != null; }); // S048: a gyűjtés a következő kockában fogyaszt staminát (tether-system)
   stepActLog(actlog, dt, [activityOf(0), activityOf(1)]); // S047: tevékenység-idő napló
   stepTetherVisual(vis, tether, dt);
@@ -302,11 +311,32 @@ function drawPlayer(ctx, p, ox, oy) {
 }
 
 // Egy nézet rajza a saját offscreen ctx-re (0,0 = a nézet bal-felső sarka; o = az adott kamera offsetje).
+// Akadályok (S060 greybox): zárt bozót = zöldesbarna, zárt sötét átjáró = sötét; a kivágás-sáv a játékosonként (sárga = megy, piros = jobb eszköz kell).
+function drawObstacles(ctx, o, vw, vh) {
+  for (const r of obstacles.items.values()) {
+    if (r.kind === 'blocked' ? r.cleared : r.open) continue;
+    const x = Math.round(r.x) - o.x, y = Math.round(r.y) - o.y;
+    if (x > vw || y > vh || x + r.w < 0 || y + r.h < 0) continue;
+    ctx.fillStyle = r.kind === 'blocked' ? '#3d5a2a' : '#12121c';
+    ctx.fillRect(x, y, r.w, r.h);
+    ctx.strokeStyle = r.kind === 'blocked' ? '#6f8f45' : '#4a4a7a';
+    ctx.strokeRect(x + 0.5, y + 0.5, r.w - 1, r.h - 1);
+  }
+  for (let i = 0; i < 2; i++) {
+    const v = obstacleView(obstacles, i), r = v ? obstacles.items.get(v.id) : null;
+    if (!r) continue;
+    const bw = Math.max(24, Math.min(64, r.w)), x = Math.round(r.x + r.w / 2 - bw / 2) - o.x, y = Math.round(r.y) - o.y - 8;
+    ctx.fillStyle = 'rgba(8,12,20,0.7)'; ctx.fillRect(x - 1, y - 1, bw + 2, 6);
+    ctx.fillStyle = v.locked ? '#d85a4a' : '#e8c24a'; ctx.fillRect(x, y, Math.round(bw * (v.locked ? 1 : v.ratio)), 4);
+  }
+}
+
 function renderView(ctx, o, vw, vh, ci) {
   drawChunks(ctx, chunkRend, world, o.x, o.y, vw, vh);
   drawPockets(ctx, warp, o.x, o.y, vw, vh);
   drawSorskoRing(ctx, sorsko, ringA, o.x, o.y, vw, vh); // halvány határ-gyűrű, a határhoz közeledve erősödik
   drawGroundItems(ctx, ground, o.x, o.y, vw, vh); // S039: a földi tárgyak a fonal alatt, a y-sorted objektumok alatt
+  drawObstacles(ctx, o, vw, vh); // S060: greybox (S103/S121 cseréli)
   drawTether(ctx, o);
   drawList.length = 0;
   for (const p of game.players) drawList.push(p);
@@ -374,4 +404,4 @@ function frame(now) {
 }
 requestAnimationFrame(frame);
 
-window.__game = { abilities, menuUi, prog, actlog, skills, craftUi, tradeUi, trade, stations, craft: (i, id, n = 1) => craft(inventories[i], getRecipe(recipes, id), stationCtx(stations, players[i], skillsOf(skills, i)), n), game, split, splitRend, input, screen, tether, tc, vis, world, atlas, chunkRend, objects, objSprites, interact, warp, clock, dn, field, sorsko, menus, saveCtl, invUi, inventories, wallets, nodes, ground, drop: (i, id, n = 1) => dropItem(ground, id, n, players[i].x + 48, players[i].y, { toss: true }), give: (i, id, n = 1) => addItem(inventories[i], id, n), pay: (i, n = 1) => deposit(wallets[i], n) }; // give: fejlesztői segéd (a node-ok S037-ben bekötve; a földre dobott tárgy felvétele az S039-ben jön)
+window.__game = { obstacles, abilities, menuUi, prog, actlog, skills, craftUi, tradeUi, trade, stations, craft: (i, id, n = 1) => craft(inventories[i], getRecipe(recipes, id), stationCtx(stations, players[i], skillsOf(skills, i)), n), game, split, splitRend, input, screen, tether, tc, vis, world, atlas, chunkRend, objects, objSprites, interact, warp, clock, dn, field, sorsko, menus, saveCtl, invUi, inventories, wallets, nodes, ground, drop: (i, id, n = 1) => dropItem(ground, id, n, players[i].x + 48, players[i].y, { toss: true }), give: (i, id, n = 1) => addItem(inventories[i], id, n), pay: (i, n = 1) => deposit(wallets[i], n) }; // give: fejlesztői segéd (a node-ok S037-ben bekötve; a földre dobott tárgy felvétele az S039-ben jön)
