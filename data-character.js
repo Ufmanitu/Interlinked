@@ -1,5 +1,5 @@
 // data-character.js – fajok, kasztok, képességek (S052; adat, DOM nélkül). Validáció, nyilvántartás, audit: game-registry.js.
-// S053: a három faj (törpe, tünde, ork) kész. S055: a Harcos kaszt kész (a hatásokat a game-warrior.js köti). S056: a Varázsló kész (game-wizard.js). S057: a Vadőr (ranger) kész (game-ranger.js); a gyógyító S058.
+// S053: a három faj (törpe, tünde, ork) kész. S055: a Harcos kaszt kész (a hatásokat a game-warrior.js köti). S056: a Varázsló kész (game-wizard.js). S057: a Vadőr (ranger) kész (game-ranger.js). S058: a Gyógyító (healer) kész (game-healer.js).
 // Harcos-képesség TAG-ek: TÖRÉS (falbontás: a S059 akadályai ezt is elfogadják), TOLÁS (S059/S061 használhatja). Az alap-sebzés a 'strike' (3. képesség: nincs gombon, az S066 harc alap-támadása).
 // Passzív-azonosítók (a hatásukat a game-race.js köti): darkvision (tile-sugár, S104/S121/S142 fény), miner_speed/herb_speed/wood_speed (gyűjtés-sebesség +érték),
 //   forest_move (0..1: a terep-lassulás ennyi része megszűnik erdei terepen, S120), pull_power (az erő szorzója: strength·(1+érték), a húzás ereje a k-hookban + a teher-kapacitás).
@@ -21,7 +21,10 @@ export const CLASS_DEFS = [
   { id: 'warrior', resource: 'stamina', abilities: ['wallbreak', 'shove', 'strike'], tags: ['HARCOS'] },
   { id: 'wizard', resource: 'mana', abilities: ['light', 'ignite', 'freeze'], tags: ['VARÁZSLÓ'] }, // az első kettő a 2 gomb; a freeze 3. (slot-váltás: setAbilitySlots, S062 talentfa)
   { id: 'ranger', resource: 'focus', abilities: ['track', 'rope', 'shoot'], tags: ['VADŐR'] }, // az első kettő a 2 gomb (nem harci utility); a shoot 3.
+  { id: 'healer', resource: 'mana', abilities: ['heal', 'cleanse', 'ward'], tags: ['GYÓGYÍTÓ'] }, // az első kettő a 2 gomb; a ward 3. (slot-váltás: S062 talentfa)
 ];
+// Gyógyító (S058 kezdőérték, hangolás S188): mind 'area' (a játékos köré, a gyógyító maga is benne); heal: power = HP (a gyógyító magára selfMul = 0,75-tel), range tile, TAG GYÓGYÍTÁS (S066 HP);
+//   cleanse: power nem használt (0), range tile, TAG TISZTÍTÁS (S072 státuszok, S088 veszély-zónák: méreg/hideg feloldása); ward: power = az elnyelt sebzés, tartam: HEALER_CONFIG.wardSecs, TAG VÉDELEM.
 // Vadőr (S057 kezdőérték, hangolás S188): track: power = a jelölés időtartama mp, range = a nyomkövetés sugara tile, TAG NYOMKÖVETÉS (rejtett ösvények S122, zár/nyom S162);
 //   rope: power = a kötél tartása mp, range = a dobás hossza tile (a kötél 1,5x hosszig feszül), TAG KÖTÉL (átkelők S130, mászás S150); shoot: power = sebzés (jelölt célpontra +25%), range tile, nincs gombon (S066 távolsági alap-támadása).
 // Varázsló (S056 kezdőérték, hangolás S188): light: power = fény-időtartam mp, range = fény-sugár tile, TAG FÉNY (S059/S121/S142 akadályok és árnyék-rejtvény);
@@ -38,6 +41,9 @@ export const ABILITY_DEFS = [
   { id: 'track', resource: 'focus', cost: 15, cooldown: 4, target: 'area', range: 8, power: 20, tags: ['NYOMKÖVETÉS'] },
   { id: 'rope', resource: 'focus', cost: 10, cooldown: 3, target: 'direction', range: 6, power: 45, tags: ['KÖTÉL'] },
   { id: 'shoot', resource: 'focus', cost: 8, cooldown: 0.8, target: 'direction', range: 7, power: 6, tags: [] },
+  { id: 'heal', resource: 'mana', cost: 25, cooldown: 5, target: 'area', range: 4, power: 30, tags: ['GYÓGYÍTÁS'] },
+  { id: 'cleanse', resource: 'mana', cost: 15, cooldown: 4, target: 'area', range: 3, power: 0, tags: ['TISZTÍTÁS'] },
+  { id: 'ward', resource: 'mana', cost: 30, cooldown: 12, target: 'area', range: 4, power: 20, tags: ['VÉDELEM'] },
 ];
 
 // Teljes kulcsokkal (prefix nélkül regisztrálható: registerTexts(CHARACTER_TEXTS, '')).
@@ -58,6 +64,10 @@ export const CHARACTER_TEXTS = {
     'ability.track': 'Nyomkövetés', 'ability.track.desc': 'Feltárja a közeli rejtett nyomokat és ösvényeket, és megjelöli az ellenfeleket: a jelölt célpont jobban sérül.',
     'ability.rope': 'Kötélvetés', 'ability.rope.desc': 'Kötelet vet az előtted lévő horgonypontra; egy ideig megtart, de elszakad, ha túl messzire húzod.',
     'ability.shoot': 'Lövés', 'ability.shoot.desc': 'Nyílvessző az előtted lévő első ellenfélre; falon nem hatol át.',
+    'class.healer': 'Gyógyító', 'class.healer.desc': 'Gyógyít, tisztít, megvéd: magát és a társát is ellátja. Mana-t használ, ami pihenéskor visszatér.',
+    'ability.heal': 'Gyógyítás', 'ability.heal.desc': 'Életerőt ad mindenkinek maga körül; magára kicsit kevesebbet.',
+    'ability.cleanse': 'Tisztítás', 'ability.cleanse.desc': 'Leveszi a káros hatásokat (égés, fagy, méreg, lassítás) mindenkiről maga körül.',
+    'ability.ward': 'Oltalom', 'ability.ward.desc': 'Pajzsot von mindenki köré maga körül: egy ideig elnyeli a sebzést.',
   },
   en: {
     'race.dwarf': 'Dwarf', 'race.dwarf.desc': 'Short, sturdy and strong; sees in the dark and mines faster. Slower, and heavier to drag.',
@@ -75,5 +85,9 @@ export const CHARACTER_TEXTS = {
     'ability.track': 'Track', 'ability.track.desc': 'Reveals hidden traces and paths nearby and marks enemies: a marked target takes extra damage.',
     'ability.rope': 'Rope', 'ability.rope.desc': 'Throws a rope at the anchor point ahead; it holds for a while, but snaps if you stray too far.',
     'ability.shoot': 'Shoot', 'ability.shoot.desc': 'An arrow at the first enemy ahead; it does not pass through walls.',
+    'class.healer': 'Healer', 'class.healer.desc': 'Heals, cleanses, protects: looks after themself and their partner. Uses mana, which returns with rest.',
+    'ability.heal': 'Heal', 'ability.heal.desc': 'Restores health to everyone around you; a little less to yourself.',
+    'ability.cleanse': 'Cleanse', 'ability.cleanse.desc': 'Removes harmful effects (burn, freeze, poison, slow) from everyone around you.',
+    'ability.ward': 'Ward', 'ability.ward.desc': 'Wraps everyone around you in a shield that absorbs damage for a while.',
   },
 };
