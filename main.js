@@ -46,6 +46,8 @@ import { PROG_TEXTS, createProgression, connectProgression, onProgress } from '.
 import { ACTLOG_TEXTS, createActLog, loadActLog, stepActLog, connectActLog, classifyActivity, bindActLogKeys, exportActLogText, saveActLog } from './game-actlog.js';
 import { MENU_TEXTS, createMenuUi, routeMenuInputs, applyMenuClose, stepMenuUi, menuTabActive, maskMenus } from './game-menu.js'; // S049
 import { drawMenuPanels } from './render-menu.js'; // S049
+import { CHARSELECT_TEXTS, createCharSelect, stepCharSelect, finishCharSelect } from './game-charselect.js'; // S063: karakterválasztó (induláskor)
+import { drawCharSelect } from './render-charselect.js'; // S063
 import { createWarpSystem, warpProvider, warpColliders, handleWarpEvent, stepWarp, streamPoints, warpWhere } from './world-warp.js';
 import { visibleHouses, drawHouse, drawPockets } from './render-warp.js';
 import { createGameClock, stepClock, clockInfo, bindClockKeys } from './game-clock.js';
@@ -72,6 +74,7 @@ registerTexts(TRADEUI_TEXTS, 'trade.');       // S044: trade UI szövegek (trade
 registerTexts(PROG_TEXTS, 'prog.');           // S047: szint-szövegek (prog.*)
 registerTexts(ACTLOG_TEXTS, 'actlog.');       // S047: napló-export szövegek (actlog.*)
 registerTexts(MENU_TEXTS, 'menu.');           // S049: menü-fülek (térkép, beállítások) szövegei (menu.*)
+registerTexts(CHARSELECT_TEXTS, 'charsel.');   // S063: karakterválasztó szövegei (charsel.*)
 registerTexts(OBSTACLE_TEXTS, '');            // S060: obstacle.<id>, obstacle.tag.<TAG>, act.clear
 for (const l of ['hu', 'en']) for (const k of Object.keys(OBSTACLE_TEXTS[l])) if (k.startsWith('act.')) INTERACT_TEXT[l][k] = OBSTACLE_TEXTS[l][k]; // S060: a prompt az ideiglenes INTERACT_TEXT-ből olvas
 for (const l of ['hu', 'en']) for (const k of Object.keys(STATION_TEXTS[l])) if (k.startsWith('act.')) INTERACT_TEXT[l][k] = STATION_TEXTS[l][k];
@@ -90,8 +93,11 @@ const SPAWN = [[spot.x - 70, spot.y], [spot.x + 70, spot.y]];
 const players = SPAWN.map(([x, y], i) => createPlayer(i, x, y));
 registerTexts(CHARACTER_TEXTS, ''); // S053: faj-nevek és leírások (race.<id>, race.<id>.desc)
 const charReg = createCharacterRegistry(); // S053: fajok (törpe, tünde, ork); kasztok S055-től
-applyRace(charReg, players[0], 'dwarf'); // S053: ideiglenes alap-fajok; az S063 karakterválasztó cseréli (a faj mentése is ott)
+applyRace(charReg, players[0], 'dwarf'); // S053: alap-fajok arra az esetre, ha a karakterválasztó kimarad; S063: a választó az induláskor felülírja (faj + kaszt)
 applyRace(charReg, players[1], 'elf');
+let selStore = null;
+try { selStore = typeof localStorage !== 'undefined' ? localStorage : null; } catch (e) { selStore = null; }
+const select = createCharSelect(charReg, { storage: selStore }); // S063: induláskor két játékos: faj + kaszt (a legutóbbi választás előre kijelölve, localStorage 'interlinked.chars'); a faj/kaszt mentés-fájlba kerülése később
 const abilities = createAbilitySystem({ reg: charReg }); // S054: képesség-végrehajtó (2 gomb = a kaszt első két képessége; kasztok S055-től; hatás: onAbility/setAbilityHandler)
 const wallets = createPlayerWallets(); // S036: játékosonként külön pénz (HUD; S050: mentve)
 const inventories = createPlayerInventories(); // S034: játékosonként külön inventory; az összsúly a p.load-ba és a p.speedMul-ba kerül (az UI az S035-ben)
@@ -218,11 +224,16 @@ const menuUi = createMenuUi({ actions: {
   import: () => bg(runSaveAction(saveCtl, 'import')),
   log: () => { saveActLog(actlog); copyText(exportActLogText(actlog, (k, p) => t('actlog.' + k, p))); },
 } });
-const game = { obstacles, abilities, menuUi, prog, actlog, skills, craftUi, tradeUi, trade, stations, time: 0, ticks: 0, fps: 0, players, inventories, wallets, ground, camera, split, tether, walls, world, objects, interact, warp, clock, field, sorsko, menus, invUi, nodes };
+const game = { select, obstacles, abilities, menuUi, prog, actlog, skills, craftUi, tradeUi, trade, stations, time: 0, ticks: 0, fps: 0, players, inventories, wallets, ground, camera, split, tether, walls, world, objects, interact, warp, clock, field, sorsko, menus, invUi, nodes };
 const drawList = [];                           // y-sort lista: játékosok + látható házak
 
 function update(dt) {
   input.update();
+  if (!select.done) { // S063: a választás alatt a világ áll; ha mindketten készek, a faj + kaszt ráállítódik, és indul a játék
+    stepCharSelect(select, [input.get(0), input.get(1)], dt);
+    if (select.done) finishCharSelect(select, game.players);
+    return;
+  }
   stepWarp(warp, dt);
   stepClock(clock, dt);
   stepSorsko(sorsko, dt);
@@ -351,6 +362,7 @@ function renderView(ctx, o, vw, vh, ci) {
 
 function render() {
   const ctx = screen.ctx;
+  if (!select.done) { drawCharSelect(ctx, select, VIRTUAL_W, VIRTUAL_H, t); return; } // S063: karakterválasztó a játék helyett
   const ci = clockInfo(clock);
   ringA = ringAlpha(sorsko, ringStrength(sorsko, game.players));
   splitOffsets(split, offs);
@@ -404,4 +416,4 @@ function frame(now) {
 }
 requestAnimationFrame(frame);
 
-window.__game = { obstacles, abilities, menuUi, prog, actlog, skills, craftUi, tradeUi, trade, stations, craft: (i, id, n = 1) => craft(inventories[i], getRecipe(recipes, id), stationCtx(stations, players[i], skillsOf(skills, i)), n), game, split, splitRend, input, screen, tether, tc, vis, world, atlas, chunkRend, objects, objSprites, interact, warp, clock, dn, field, sorsko, menus, saveCtl, invUi, inventories, wallets, nodes, ground, drop: (i, id, n = 1) => dropItem(ground, id, n, players[i].x + 48, players[i].y, { toss: true }), give: (i, id, n = 1) => addItem(inventories[i], id, n), pay: (i, n = 1) => deposit(wallets[i], n) }; // give: fejlesztői segéd (a node-ok S037-ben bekötve; a földre dobott tárgy felvétele az S039-ben jön)
+window.__game = { select, obstacles, abilities, menuUi, prog, actlog, skills, craftUi, tradeUi, trade, stations, craft: (i, id, n = 1) => craft(inventories[i], getRecipe(recipes, id), stationCtx(stations, players[i], skillsOf(skills, i)), n), game, split, splitRend, input, screen, tether, tc, vis, world, atlas, chunkRend, objects, objSprites, interact, warp, clock, dn, field, sorsko, menus, saveCtl, invUi, inventories, wallets, nodes, ground, drop: (i, id, n = 1) => dropItem(ground, id, n, players[i].x + 48, players[i].y, { toss: true }), give: (i, id, n = 1) => addItem(inventories[i], id, n), pay: (i, n = 1) => deposit(wallets[i], n) }; // give: fejlesztői segéd (a node-ok S037-ben bekötve; a földre dobott tárgy felvétele az S039-ben jön)
