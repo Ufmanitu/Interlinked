@@ -1,5 +1,5 @@
 // data-character.js – fajok, kasztok, képességek (S052; adat, DOM nélkül). Validáció, nyilvántartás, audit: game-registry.js.
-// S053: a három faj (törpe, tünde, ork) kész. S055: a Harcos kaszt kész (a hatásokat a game-warrior.js köti); a varázsló/ranger/gyógyító S056–S058.
+// S053: a három faj (törpe, tünde, ork) kész. S055: a Harcos kaszt kész (a hatásokat a game-warrior.js köti). S056: a Varázsló kész (game-wizard.js); a ranger/gyógyító S057–S058.
 // Harcos-képesség TAG-ek: TÖRÉS (falbontás: a S059 akadályai ezt is elfogadják), TOLÁS (S059/S061 használhatja). Az alap-sebzés a 'strike' (3. képesség: nincs gombon, az S066 harc alap-támadása).
 // Passzív-azonosítók (a hatásukat a game-race.js köti): darkvision (tile-sugár, S104/S121/S142 fény), miner_speed/herb_speed/wood_speed (gyűjtés-sebesség +érték),
 //   forest_move (0..1: a terep-lassulás ennyi része megszűnik erdei terepen, S120), pull_power (az erő szorzója: strength·(1+érték), a húzás ereje a k-hookban + a teher-kapacitás).
@@ -19,13 +19,19 @@ export const RACE_DEFS = [
 ];
 export const CLASS_DEFS = [
   { id: 'warrior', resource: 'stamina', abilities: ['wallbreak', 'shove', 'strike'], tags: ['HARCOS'] },
+  { id: 'wizard', resource: 'mana', abilities: ['light', 'ignite', 'freeze'], tags: ['VARÁZSLÓ'] }, // az első kettő a 2 gomb; a freeze 3. (slot-váltás: setAbilitySlots, S062 talentfa)
 ];
+// Varázsló (S056 kezdőérték, hangolás S188): light: power = fény-időtartam mp, range = fény-sugár tile, TAG FÉNY (S059/S121/S142 akadályok és árnyék-rejtvény);
+//   ignite: power = közvetlen sebzés (+ égés-DoT: game-wizard BURN), range = a láng hossza tile, TAG ÉGETÉS (éghető akadály: bozót, S120); freeze: power = fagyás-idő mp, range tile, TAG FAGYASZTÁS (S061 fagy + vízfelszín kombó).
 // Harcos (S055 kezdőérték, hangolás S188): wallbreak: power = falsebzés/használat (a fal hp-ja 3 körüli; a hatást az erő szorozza), range tile;
 //   shove: power = tolás px-ben (az erő szorozza), range tile (a sáv hossza); strike: power = sebzés (az erő szorozza).
 export const ABILITY_DEFS = [
   { id: 'wallbreak', resource: 'stamina', cost: 35, cooldown: 3, target: 'direction', range: 1.5, power: 2, tags: ['TÖRÉS'] },
   { id: 'shove', resource: 'stamina', cost: 20, cooldown: 2, target: 'direction', range: 2, power: 64, tags: ['TOLÁS'] },
   { id: 'strike', resource: 'stamina', cost: 12, cooldown: 0.6, target: 'enemy', range: 1.5, power: 8, tags: [] },
+  { id: 'light', resource: 'mana', cost: 15, cooldown: 2, target: 'self', range: 5, power: 90, tags: ['FÉNY'] },
+  { id: 'ignite', resource: 'mana', cost: 20, cooldown: 3, target: 'direction', range: 3, power: 4, tags: ['ÉGETÉS'] },
+  { id: 'freeze', resource: 'mana', cost: 25, cooldown: 6, target: 'enemy', range: 5, power: 3, tags: ['FAGYASZTÁS'] },
 ];
 
 // Teljes kulcsokkal (prefix nélkül regisztrálható: registerTexts(CHARACTER_TEXTS, '')).
@@ -38,6 +44,10 @@ export const CHARACTER_TEXTS = {
     'ability.wallbreak': 'Falbontás', 'ability.wallbreak.desc': 'Átüti a repedezett falat előtted.',
     'ability.shove': 'Tolás', 'ability.shove.desc': 'Eltol minden ellenfelet előtted.',
     'ability.strike': 'Csapás', 'ability.strike.desc': 'Alap közelharci ütés a legközelebbi ellenfélre.',
+    'class.wizard': 'Varázsló', 'class.wizard.desc': 'Fényt gyújt, lángot vet, megfagyasztja az ellenfelet. Mana-t használ, ami pihenéskor visszatér.',
+    'ability.light': 'Fény', 'ability.light.desc': 'Világító gömb kíséri egy ideig; sötétben látni enged.',
+    'ability.ignite': 'Gyújtás', 'ability.ignite.desc': 'Lángcsóva előre: felgyújtja az éghető akadályt és megperzseli az ellenfelet.',
+    'ability.freeze': 'Fagyasztás', 'ability.freeze.desc': 'Pár másodpercre jégbe zárja a legközelebbi ellenfelet.',
   },
   en: {
     'race.dwarf': 'Dwarf', 'race.dwarf.desc': 'Short, sturdy and strong; sees in the dark and mines faster. Slower, and heavier to drag.',
@@ -47,5 +57,9 @@ export const CHARACTER_TEXTS = {
     'ability.wallbreak': 'Wall Break', 'ability.wallbreak.desc': 'Smashes through the cracked wall in front of you.',
     'ability.shove': 'Shove', 'ability.shove.desc': 'Pushes every enemy in front of you back.',
     'ability.strike': 'Strike', 'ability.strike.desc': 'Basic melee hit on the nearest enemy.',
+    'class.wizard': 'Wizard', 'class.wizard.desc': 'Kindles light, hurls flame, freezes foes. Uses mana, which returns with rest.',
+    'ability.light': 'Light', 'ability.light.desc': 'A glowing orb follows you for a while; lets you see in the dark.',
+    'ability.ignite': 'Ignite', 'ability.ignite.desc': 'A jet of flame ahead: sets flammable obstacles alight and scorches enemies.',
+    'ability.freeze': 'Freeze', 'ability.freeze.desc': 'Locks the nearest enemy in ice for a few seconds.',
   },
 };
