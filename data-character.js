@@ -1,5 +1,5 @@
 // data-character.js – fajok, kasztok, képességek (S052; adat, DOM nélkül). Validáció, nyilvántartás, audit: game-registry.js.
-// S053: a három faj (törpe, tünde, ork) kész. S055: a Harcos kaszt kész (a hatásokat a game-warrior.js köti). S056: a Varázsló kész (game-wizard.js); a ranger/gyógyító S057–S058.
+// S053: a három faj (törpe, tünde, ork) kész. S055: a Harcos kaszt kész (a hatásokat a game-warrior.js köti). S056: a Varázsló kész (game-wizard.js). S057: a Vadőr (ranger) kész (game-ranger.js); a gyógyító S058.
 // Harcos-képesség TAG-ek: TÖRÉS (falbontás: a S059 akadályai ezt is elfogadják), TOLÁS (S059/S061 használhatja). Az alap-sebzés a 'strike' (3. képesség: nincs gombon, az S066 harc alap-támadása).
 // Passzív-azonosítók (a hatásukat a game-race.js köti): darkvision (tile-sugár, S104/S121/S142 fény), miner_speed/herb_speed/wood_speed (gyűjtés-sebesség +érték),
 //   forest_move (0..1: a terep-lassulás ennyi része megszűnik erdei terepen, S120), pull_power (az erő szorzója: strength·(1+érték), a húzás ereje a k-hookban + a teher-kapacitás).
@@ -20,7 +20,10 @@ export const RACE_DEFS = [
 export const CLASS_DEFS = [
   { id: 'warrior', resource: 'stamina', abilities: ['wallbreak', 'shove', 'strike'], tags: ['HARCOS'] },
   { id: 'wizard', resource: 'mana', abilities: ['light', 'ignite', 'freeze'], tags: ['VARÁZSLÓ'] }, // az első kettő a 2 gomb; a freeze 3. (slot-váltás: setAbilitySlots, S062 talentfa)
+  { id: 'ranger', resource: 'focus', abilities: ['track', 'rope', 'shoot'], tags: ['VADŐR'] }, // az első kettő a 2 gomb (nem harci utility); a shoot 3.
 ];
+// Vadőr (S057 kezdőérték, hangolás S188): track: power = a jelölés időtartama mp, range = a nyomkövetés sugara tile, TAG NYOMKÖVETÉS (rejtett ösvények S122, zár/nyom S162);
+//   rope: power = a kötél tartása mp, range = a dobás hossza tile (a kötél 1,5x hosszig feszül), TAG KÖTÉL (átkelők S130, mászás S150); shoot: power = sebzés (jelölt célpontra +25%), range tile, nincs gombon (S066 távolsági alap-támadása).
 // Varázsló (S056 kezdőérték, hangolás S188): light: power = fény-időtartam mp, range = fény-sugár tile, TAG FÉNY (S059/S121/S142 akadályok és árnyék-rejtvény);
 //   ignite: power = közvetlen sebzés (+ égés-DoT: game-wizard BURN), range = a láng hossza tile, TAG ÉGETÉS (éghető akadály: bozót, S120); freeze: power = fagyás-idő mp, range tile, TAG FAGYASZTÁS (S061 fagy + vízfelszín kombó).
 // Harcos (S055 kezdőérték, hangolás S188): wallbreak: power = falsebzés/használat (a fal hp-ja 3 körüli; a hatást az erő szorozza), range tile;
@@ -32,6 +35,9 @@ export const ABILITY_DEFS = [
   { id: 'light', resource: 'mana', cost: 15, cooldown: 2, target: 'self', range: 5, power: 90, tags: ['FÉNY'] },
   { id: 'ignite', resource: 'mana', cost: 20, cooldown: 3, target: 'direction', range: 3, power: 4, tags: ['ÉGETÉS'] },
   { id: 'freeze', resource: 'mana', cost: 25, cooldown: 6, target: 'enemy', range: 5, power: 3, tags: ['FAGYASZTÁS'] },
+  { id: 'track', resource: 'focus', cost: 15, cooldown: 4, target: 'area', range: 8, power: 20, tags: ['NYOMKÖVETÉS'] },
+  { id: 'rope', resource: 'focus', cost: 10, cooldown: 3, target: 'direction', range: 6, power: 45, tags: ['KÖTÉL'] },
+  { id: 'shoot', resource: 'focus', cost: 8, cooldown: 0.8, target: 'direction', range: 7, power: 6, tags: [] },
 ];
 
 // Teljes kulcsokkal (prefix nélkül regisztrálható: registerTexts(CHARACTER_TEXTS, '')).
@@ -48,6 +54,10 @@ export const CHARACTER_TEXTS = {
     'ability.light': 'Fény', 'ability.light.desc': 'Világító gömb kíséri egy ideig; sötétben látni enged.',
     'ability.ignite': 'Gyújtás', 'ability.ignite.desc': 'Lángcsóva előre: felgyújtja az éghető akadályt és megperzseli az ellenfelet.',
     'ability.freeze': 'Fagyasztás', 'ability.freeze.desc': 'Pár másodpercre jégbe zárja a legközelebbi ellenfelet.',
+    'class.ranger': 'Vadőr', 'class.ranger.desc': 'Nyomot olvas, kötelet vet, messzire lő. Összpontosítást használ, ami gyorsan visszatér.',
+    'ability.track': 'Nyomkövetés', 'ability.track.desc': 'Feltárja a közeli rejtett nyomokat és ösvényeket, és megjelöli az ellenfeleket: a jelölt célpont jobban sérül.',
+    'ability.rope': 'Kötélvetés', 'ability.rope.desc': 'Kötelet vet az előtted lévő horgonypontra; egy ideig megtart, de elszakad, ha túl messzire húzod.',
+    'ability.shoot': 'Lövés', 'ability.shoot.desc': 'Nyílvessző az előtted lévő első ellenfélre; falon nem hatol át.',
   },
   en: {
     'race.dwarf': 'Dwarf', 'race.dwarf.desc': 'Short, sturdy and strong; sees in the dark and mines faster. Slower, and heavier to drag.',
@@ -61,5 +71,9 @@ export const CHARACTER_TEXTS = {
     'ability.light': 'Light', 'ability.light.desc': 'A glowing orb follows you for a while; lets you see in the dark.',
     'ability.ignite': 'Ignite', 'ability.ignite.desc': 'A jet of flame ahead: sets flammable obstacles alight and scorches enemies.',
     'ability.freeze': 'Freeze', 'ability.freeze.desc': 'Locks the nearest enemy in ice for a few seconds.',
+    'class.ranger': 'Ranger', 'class.ranger.desc': 'Reads tracks, throws ropes, shoots from afar. Uses focus, which returns quickly.',
+    'ability.track': 'Track', 'ability.track.desc': 'Reveals hidden traces and paths nearby and marks enemies: a marked target takes extra damage.',
+    'ability.rope': 'Rope', 'ability.rope.desc': 'Throws a rope at the anchor point ahead; it holds for a while, but snaps if you stray too far.',
+    'ability.shoot': 'Shoot', 'ability.shoot.desc': 'An arrow at the first enemy ahead; it does not pass through walls.',
   },
 };
