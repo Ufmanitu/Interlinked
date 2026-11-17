@@ -27,7 +27,7 @@ const cast = (m, id, i = 0, facing = right) => castAbility(m.sys, m.players, i, 
 test('ranger: adat – kaszt + 3 képesség (fókusz), 2 gomb = track/rope, TAG-ek, élő regiszter hibátlan, HU/EN szövegek', () => {
   assert(CLASS_DEFS.some(c => c.id === 'ranger') && ABILITY_DEFS.filter(a => ['track', 'rope', 'shoot'].includes(a.id)).length === 3, 'vadőr adat');
   const reg = createCharacterRegistry(), c = reg.classes.get('ranger');
-  ok(c); eq(c.resource, 'focus'); eq(c.abilities.join(), 'track,rope,shoot'); eq(reg.errors.length, 0);
+  ok(c); eq(c.resource, 'focus'); eq(c.abilities.join(), 'track,rope,shoot,gust'); eq(reg.errors.length, 0);
   const sys = createAbilitySystem({ reg }), p = createPlayer(0, 0, 0); p.class = 'ranger';
   eq(slotAbilities(sys, 0, p).join(), 'track,rope');
   const live = loadRegistry(); assert(live.ok, live.errors.concat(live.dups, live.problems).join());
