@@ -64,7 +64,8 @@ import { drawHud } from './render-hud.js';
 import { HEALTH_TEXTS, createPlayerHealths, stepPlayerHealths, applyDamage, killHealth, heal as healHealth } from './game-health.js';
 import { REVIVE_TEXTS, createRevive, onRevive, reviveGate, stepRevive, reviveView } from './game-revive.js'; // S070: elesés, újraélesztés, visszatérés
 import { ENEMY_TEXTS, createEnemySystem, spawnEnemy, stepEnemies, enemiesNear, damageEnemy, pushEnemy } from './game-enemy.js'; // S069: ellenfelek + régióhoz kötött spawn + harc
-import { createSpawner, stepSpawner } from './game-spawn.js';
+import { createSpawner, stepSpawner, SPAWN_TABLES } from './game-spawn.js';
+import { createLoot, connectLoot } from './game-loot.js'; // S071: loot-táblák (ellenség halála -> a földre esik)
 import { loadMacroMap } from './world-macro.js';
 import { MACRO_MAP } from './data-macro.js';
 import { isSolidId } from './world-tiles.js';
@@ -252,6 +253,8 @@ onRevive(revival, ev => { if (ev.type === 'wipe') { wipeToast = 3; afterLoad(); 
 // S069: ellenfelek (rácsos A* AI), régióhoz kötött spawn, harc (hitbox/lövedék/visszalökés) és a kaszt-képességek hatása (a class-modulok UTÁN az attachCombat).
 const es = createEnemySystem({ seed: WORLD_SEED });
 const combat = createCombat();
+const loot = createLoot({ seed: WORLD_SEED });      // S071: súlyozott, szint-függő drop-táblák; a szint a spawn-táblából (levels közepe)
+connectLoot(loot, es, { ground, spawnTables: SPAWN_TABLES }); // az ellenség 'died' eseményére: a loot a holttest helyére esik (felvétel: a mágnes)
 const spawner = createSpawner({ mm: loadMacroMap(MACRO_MAP), seed: WORLD_SEED });
 const solidTile = (tx, ty) => { const id = getStreamTile(world, tx, ty); return id < 0 || isSolidId(id); }; // nem betöltött chunk = ütköző
 const hurt = makeHurt(combat, { players, healths });
@@ -263,7 +266,7 @@ const ranger = attachRanger(abilities, { ...abEnv, hiddens: createHiddens([]), a
 const healer = attachHealer(abilities, { players, heal: (p, n) => healHealth(healths[p.index], n) });
 attachCombat(abilities, combat, { players }); // felülírja a strike/shoot kezelőjét
 connectObstacles(obstacles, abilities); // ÉGETÉS/TÖRÉS/ROBBANTÁS képesség-tag -> akadály
-const game = { revival, es, combat, spawner, healths, anims, paperdoll, select, obstacles, abilities, menuUi, prog, actlog, skills, craftUi, tradeUi, trade, stations, time: 0, ticks: 0, fps: 0, players, inventories, wallets, ground, camera, split, tether, walls, world, objects, interact, warp, clock, field, sorsko, menus, invUi, nodes };
+const game = { revival, es, loot, combat, spawner, healths, anims, paperdoll, select, obstacles, abilities, menuUi, prog, actlog, skills, craftUi, tradeUi, trade, stations, time: 0, ticks: 0, fps: 0, players, inventories, wallets, ground, camera, split, tether, walls, world, objects, interact, warp, clock, field, sorsko, menus, invUi, nodes };
 const drawList = [];                           // y-sort lista: játékosok + látható házak
 
 function update(dt) {
@@ -509,4 +512,4 @@ function frame(now) {
 }
 requestAnimationFrame(frame);
 
-window.__game = { revival, kill: i => killHealth(healths[i]), es, combat, spawner, wizard, ranger, healer, foe: (type, dx = 200, dy = 0) => spawnEnemy(es, type, players[0].x + dx, players[0].y + dy), healths, dmg: (i, n, type) => applyDamage(healths[i], { amount: n, type }), anims, paperdoll, select, obstacles, abilities, menuUi, prog, actlog, skills, craftUi, tradeUi, trade, stations, craft: (i, id, n = 1) => craft(inventories[i], getRecipe(recipes, id), stationCtx(stations, players[i], skillsOf(skills, i)), n), game, split, splitRend, input, screen, tether, tc, vis, world, atlas, chunkRend, objects, objSprites, interact, warp, clock, dn, field, sorsko, menus, saveCtl, invUi, inventories, wallets, nodes, ground, drop: (i, id, n = 1) => dropItem(ground, id, n, players[i].x + 48, players[i].y, { toss: true }), give: (i, id, n = 1) => addItem(inventories[i], id, n), pay: (i, n = 1) => deposit(wallets[i], n) }; // give: fejlesztői segéd (a node-ok S037-ben bekötve; a földre dobott tárgy felvétele az S039-ben jön)
+window.__game = { revival, kill: i => killHealth(healths[i]), es, loot, combat, spawner, wizard, ranger, healer, foe: (type, dx = 200, dy = 0) => spawnEnemy(es, type, players[0].x + dx, players[0].y + dy), healths, dmg: (i, n, type) => applyDamage(healths[i], { amount: n, type }), anims, paperdoll, select, obstacles, abilities, menuUi, prog, actlog, skills, craftUi, tradeUi, trade, stations, craft: (i, id, n = 1) => craft(inventories[i], getRecipe(recipes, id), stationCtx(stations, players[i], skillsOf(skills, i)), n), game, split, splitRend, input, screen, tether, tc, vis, world, atlas, chunkRend, objects, objSprites, interact, warp, clock, dn, field, sorsko, menus, saveCtl, invUi, inventories, wallets, nodes, ground, drop: (i, id, n = 1) => dropItem(ground, id, n, players[i].x + 48, players[i].y, { toss: true }), give: (i, id, n = 1) => addItem(inventories[i], id, n), pay: (i, n = 1) => deposit(wallets[i], n) }; // give: fejlesztői segéd (a node-ok S037-ben bekötve; a földre dobott tárgy felvétele az S039-ben jön)
