@@ -17,6 +17,7 @@ const MODULES = [
   './game-wallet.js', './game-trade.js', // S043
   './game-ability.js', // S054
   './game-warrior.js', './data-character.js', './game-registry.js', './game-race.js', // S055
+  './game-status.js', // S072
 ];
 const FRAMES = 600;
 const DT = 1 / 60;
