@@ -12,7 +12,9 @@ export function createPlayer(index, x, y) {
 // p.speedMul (opcionális, alap 1; S034 teher-lassulás): a saját sebesség szorzója, hibás érték -> 1, negatív -> 0.
 export function desiredVelocity(p, inp) {
   const m = Number.isFinite(p.speedMul) ? Math.max(0, p.speedMul) : 1;
-  return { x: (inp.x || 0) * p.speed * m, y: (inp.y || 0) * p.speed * m };
+  // S068: p.kbx/p.kby = a visszalökés sebessége (game-combat), additív; hibás -> 0
+  const kx = Number.isFinite(p.kbx) ? p.kbx : 0, ky = Number.isFinite(p.kby) ? p.kby : 0;
+  return { x: (inp.x || 0) * p.speed * m + kx, y: (inp.y || 0) * p.speed * m + ky };
 }
 
 // A póráz által megengedett tényleges sebesség alkalmazása (a játékos önállóan nem mozog).

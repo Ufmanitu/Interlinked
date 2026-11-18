@@ -243,3 +243,126 @@ test('enemy: mozgás közben a fal megállítja (x és y), célváltás csak jó
   p1.x = 500; p1.y = 630; run(sys, [p0, p1], env, 0.6); eq(e.target, 0, 'alig közelebbi: nincs váltás');
   p1.y = 580; run(sys, [p0, p1], env, 0.6); eq(e.target, 1, 'jóval közelebbi: váltás');
 });
+
+// ---- S068: támadás és hitbox (game-combat, render-combat). A fájl így 300 sor fölött van: S185 körül vágandó (test-combat.js). ----
+import { COMBAT_CONFIG, ATTACK_DEFS, hurtbox, rectsOverlap, circleHitsRect, facingDir, meleeBox, createCombat, onCombat, startMelee, startShot, startKnockback, flashAlpha, hurtPlayer, makeHurt, stepCombat, combatView, attachCombat } from './game-combat.js';
+import { drawCombat, drawHitFlashes } from './render-combat.js';
+import { createAbilitySystem, castAbility, setAbilityHandler, poolValue, ensurePools } from './game-ability.js';
+import { createCharacterRegistry } from './game-registry.js';
+import { attachWarrior, strengthMul } from './game-warrior.js';
+import { stepPlayerHealths, onHealth, applyDamage } from './game-health.js';
+import { desiredVelocity } from './game-player.js';
+
+const RIGHT = { x: 1, y: 0 };
+const cb = (o = {}) => { const cs = createCombat(), es = mkSys(o.defs), ps = [pl(0, 200, 200), pl(1, 600, 600)], hs = createPlayerHealths(ps); return { cs, es, ps, hs, ctx: { players: ps, healths: hs, enemySys: es, walls: o.walls || [] } }; };
+const cstep = (S, secs, fn) => { const evs = []; for (let i = 0; i < Math.round(secs / DT); i++) { const e = stepCombat(S.cs, S.ctx, DT); evs.push(...e); stepPlayerHealths(S.hs, S.ps, DT); if (fn && fn(i, e) === false) break; } return evs; };
+const swing = (S, o = {}) => startMelee(S.cs, { owner: { team: 'player', index: 0 }, x: 200, y: 200, dir: RIGHT, size: 24, reach: 40, width: 44, delay: 0.1, active: 0.12, damage: { amount: 8, type: 'physical', tag: 'melee' }, knock: 36, ability: 'strike', ...o });
+const hitsOf = evs => evs.filter(e => e.type === 'hit');
+
+test('combat: geometria – hurtbox, átfedés (érintés nem), kör-téglalap, 4 irány, ütés-doboz', () => {
+  eq(JSON.stringify(hurtbox({ x: 10, y: 20, w: 8, h: 6 })), JSON.stringify({ x: 6, y: 17, w: 8, h: 6 })); eq(hurtbox({ x: 0, y: 0 }).w, COMBAT_CONFIG.playerSize); eq(hurtbox(null), null); eq(hurtbox({ x: NaN, y: 0 }), null);
+  assert(!rectsOverlap({ x: 0, y: 0, w: 10, h: 10 }, { x: 10, y: 0, w: 5, h: 5 }), 'érintés'); assert(rectsOverlap({ x: 0, y: 0, w: 10, h: 10 }, { x: 9, y: 9, w: 5, h: 5 }));
+  assert(circleHitsRect(0, 0, 5, { x: 5, y: -1, w: 2, h: 2 })); assert(!circleHitsRect(0, 0, 4.9, { x: 5, y: -1, w: 2, h: 2 })); assert(circleHitsRect(1, 1, 1, { x: 0, y: 0, w: 4, h: 4 }), 'belül');
+  for (const [d, x, y] of [[{ x: 3, y: 1 }, 1, 0], [{ x: -1, y: -2 }, 0, -1], [{ x: 0, y: 0 }, 0, 1], [null, 0, 1], [{ x: NaN, y: 1 }, 0, 1], [{ x: -5, y: 5 }, -1, 0]]) { const f = facingDir(d); assert(f.x === x && f.y === y, JSON.stringify(d)); }
+  eq(JSON.stringify(meleeBox(100, 100, RIGHT, 40, 44, 12)), JSON.stringify({ x: 112, y: 78, w: 40, h: 44 })); eq(meleeBox(100, 100, { x: -1, y: 0 }, 40, 44, 12).x, 48);
+  eq(JSON.stringify(meleeBox(100, 100, { x: 0, y: 1 }, 40, 44, 12)), JSON.stringify({ x: 78, y: 112, w: 44, h: 40 })); eq(meleeBox(100, 100, { x: 0, y: -1 }, 40, 44, 12).y, 48);
+});
+
+test('combat: ütés – késleltetés, aktív ablak, egyszeri találat, irány, hatótáv, fal, halál, visszalökés', () => {
+  const S = cb(), e = spawnEnemy(S.es, 'grunt', 240, 200), back = spawnEnemy(S.es, 'grunt', 160, 200), far = spawnEnemy(S.es, 'grunt', 290, 200); for (const x of S.es.list) x.state = 'idle';
+  swing(S); assert(cstep(S, 0.08).length === 0 || hitsOf(cstep(S, 0)).length === 0, 'késleltetés alatt nincs találat'); eq(e.hp, 30);
+  const evs = cstep(S, 0.4); eq(hitsOf(evs).length, 1, 'egyszeri találat'); eq(e.hp, 22); eq(back.hp, 30, 'mögötte nincs'); eq(far.hp, 30, 'hatótávon túl nincs'); eq(S.cs.attacks.length, 0, 'lejárt');
+  assert(e.x > 240, 'visszalökés'); assert(flashAlpha(S.cs, { kind: 'enemy', ref: e }) >= 0, 'villanás'); eq(S.cs.stats.hits, 1);
+  const W = cb({ walls: [R(215, 150, 10, 100)] }), we = spawnEnemy(W.es, 'grunt', 240, 200); swing(W); cstep(W, 0.4); eq(we.hp, 30, 'fal a gazda és a cél között');
+  const K = cb(), ke = spawnEnemy(K.es, 'grunt', 240, 200); ke.health.hp = 5; ke.hp = 5; swing(K); const kev = hitsOf(cstep(K, 0.4)); assert(kev[0].killed && ke.health.dead, 'halál'); eq(K.cs.stats.kills, 1); eq(K.cs.kb.size, 0, 'halottat nem lök');
+  const D = cb(), de = spawnEnemy(D.es, 'grunt', 240, 200); swing(D); D.ps[0].dead = true; cstep(D, 0.4); eq(de.hp, 30, 'a gazda elesett: megszakad');
+  const U = cb(), ue = spawnEnemy(U.es, 'grunt', 240, 200); swing(U, { dir: { x: 0, y: -1 } }); cstep(U, 0.4); eq(ue.hp, 30, 'rossz irány');
+  const E = cb(), ee = spawnEnemy(E.es, 'grunt', 240, 200); ee.state = 'idle'; E.ps[0].x = 255; startMelee(E.cs, { owner: { team: 'enemy' }, x: 220, y: 200, dir: RIGHT, size: 20, reach: 40, width: 44, delay: 0, active: 0.1, damage: { amount: 5, type: 'physical' } }); cstep(E, 0.3); eq(E.hs[0].hp, 95, 'az ellenség ütése a játékost'); eq(ee.hp, 30, 'nincs baráti tűz');
+});
+
+test('combat: ellenség-támadás a játékosra – sebzés, i-frame, visszalökés + p.kbx a mozgásba, villanás, halál', () => {
+  const S = cb(), e = spawnEnemy(S.es, 'grunt', 240, 200), p = S.ps[0], env = { walls: [], healths: S.hs, hurt: makeHurt(S.cs, S.ctx) }; let got = null;
+  for (let i = 0; i < 90 && !got; i++) { const ev = stepEnemies(S.es, S.ps, DT, env); stepCombat(S.cs, S.ctx, DT); stepPlayerHealths(S.hs, S.ps, DT); got = ev.find(x => x.type === 'hit') || null; }
+  assert(got, 'az AI támadott'); eq(S.hs[0].hp, 94); assert(S.hs[0].invuln > 0.5, 'i-frame'); assert(flashAlpha(S.cs, { kind: 'player', index: 0 }) > 0.9, 'villanás');
+  stepCombat(S.cs, S.ctx, DT); assert(p.kbx < 0 && p.kbx > -401, 'balra lök: ' + p.kbx); eq(desiredVelocity(p, { x: 0, y: 0 }).x, p.kbx); near(desiredVelocity(p, { x: 1, y: 0 }).x, p.speed + p.kbx, 1e-9);
+  const r2 = hurtPlayer(S.cs, S.ctx, 0, { amount: 5, type: 'physical' }); eq(r2.reason, 'invuln'); eq(S.hs[0].hp, 94);
+  for (let i = 0; i < 40; i++) stepPlayerHealths(S.hs, S.ps, DT); eq(hurtPlayer(S.cs, S.ctx, 0, { amount: 5, type: 'physical' }).dealt, 5, 'lejárt az i-frame');
+  const K = cb(); K.hs[0].hp = 1; const kr = hurtPlayer(K.cs, K.ctx, 0, { amount: 9, type: 'physical', knockback: { x: 30, y: 0 } }); assert(kr.killed && K.hs[0].dead && K.hs[0].invuln === 0, 'halál: nincs i-frame');
+  K.ps[0].dead = true; stepCombat(K.cs, K.ctx, DT); eq(K.ps[0].kbx, 0, 'halottat nem lök'); eq(hurtPlayer(K.cs, K.ctx, 7, { amount: 1 }), null); eq(hurtPlayer(K.cs, {}, 0, { amount: 1 }), null);
+  void e;
+});
+
+test('combat: lövedék – repülés, első találat, átható, fal, hatótáv, csapat, jelölés-bónusz, vékony cél', () => {
+  const shot = (S, o = {}) => startShot(S.cs, { owner: { team: 'player', index: 0 }, x: 100, y: 100, dir: RIGHT, speed: 420, radius: 5, range: 300, damage: { amount: 6, type: 'physical', tag: 'ranged' }, knock: 24, ability: 'shoot', ...o });
+  const A = cb(), a1 = spawnEnemy(A.es, 'grunt', 200, 100), a2 = spawnEnemy(A.es, 'grunt', 260, 100); shot(A); assert(cstep(A, 0.05).length === 0 && a1.hp === 30, 'még úton'); cstep(A, 1); eq(a1.hp, 24); eq(a2.hp, 30, 'az első találat megállítja'); eq(A.cs.shots.length, 0);
+  const B = cb(), b1 = spawnEnemy(B.es, 'grunt', 200, 100), b2 = spawnEnemy(B.es, 'grunt', 260, 100); shot(B, { pierce: 1 }); cstep(B, 1); assert(b1.hp === 24 && b2.hp === 24, 'átható: kettő');
+  const W = cb({ walls: [R(180, 60, 20, 100)] }), w1 = spawnEnemy(W.es, 'grunt', 260, 100); shot(W); const we = cstep(W, 1); eq(w1.hp, 30, 'a fal megállítja'); eq(we.filter(x => x.type === 'wall').length, 1); eq(W.cs.stats.walls, 1);
+  const R1 = cb(), r1 = spawnEnemy(R1.es, 'grunt', 300, 100); shot(R1, { range: 100 }); cstep(R1, 1); eq(r1.hp, 30, 'hatótávon túl'); eq(R1.cs.shots.length, 0);
+  const T = cb(), t1 = spawnEnemy(T.es, 'grunt', 200, 100); startShot(T.cs, { owner: { team: 'enemy' }, x: 100, y: 200, dir: RIGHT, speed: 300, range: 400, damage: { amount: 4, type: 'physical' } }); T.ps[0].x = 300; T.ps[0].y = 200; cstep(T, 1); eq(T.hs[0].hp, 96, 'az ellenség lövedéke a játékost'); eq(t1.hp, 30, 'nincs baráti tűz');
+  const M = cb(), m1 = spawnEnemy(M.es, 'grunt', 200, 100); m1.tracked = 5; shot(M, { damage: { amount: 10, type: 'physical', tag: 'ranged' } }); cstep(M, 1); near(m1.hp, 30 - 12.5, 1e-9, 'jelölt +25%');
+  const N = cb({ defs: [{ id: 'tiny', size: 8, hp: 30, patrol: 0 }] }), n1 = spawnEnemy(N.es, 'tiny', 300, 100); startShot(N.cs, { owner: { team: 'player', index: 0 }, x: 100, y: 100, dir: RIGHT, speed: 2000, radius: 2, range: 400, damage: { amount: 3, type: 'physical' } }); cstep(N, 0.5); eq(n1.hp, 27, 'nincs átbújás a vékony cél mellett');
+  const D = cb(), ds = shot(D, { dir: { x: 3, y: 4 } }); near(Math.hypot(ds.vx, ds.vy), 420, 1e-9); near(ds.vx, 252, 1e-9);
+  for (const bad of [{ dir: { x: 0, y: 0 } }, { speed: 0 }, { range: -1 }, { x: NaN }, { owner: null }, { damage: { amount: -1 } }, { dir: null }]) eq(shot(D, bad), null, JSON.stringify(bad));
+});
+
+test('combat: visszalökés – súly, lecsengés + megállás, fal, csere, hibás bemenet', () => {
+  const total = w => { const S = cb(), p = S.ps[0]; p.weight = w; assert(startKnockback(S.cs, { kind: 'player', index: 0, ref: p }, 40, 0)); let sum = 0; for (let i = 0; i < 120; i++) { stepCombat(S.cs, S.ctx, DT); sum += p.kbx * DT; } eq(S.cs.kb.size, 0, 'lecsengett'); eq(p.kbx, 0); return sum; };
+  const w1 = total(1), w2 = total(2), wl = total(0.5); assert(Math.abs(w1 - 40) < 6, 'kb ' + w1); assert(Math.abs(w2 - 20) < 4, 'nehéz ' + w2); assert(Math.abs(wl - 80) < 12, 'könnyű ' + wl);
+  const S = cb({ walls: [R(140, 0, 32, 300)] }), e = spawnEnemy(S.es, 'grunt', 100, 100); e.state = 'idle'; startKnockback(S.cs, { kind: 'enemy', ref: e }, 100, 0); cstep(S, 1.5); assert(e.x + e.w / 2 <= 140 + 1e-6 && e.x > 100, 'a fal előtt áll: ' + e.x); eq(collides(e, S.ctx.walls), false);
+  const p = S.ps[1]; startKnockback(S.cs, { kind: 'player', index: 1, ref: p }, 40, 0); startKnockback(S.cs, { kind: 'player', index: 1, ref: p }, 0, 40); stepCombat(S.cs, S.ctx, DT); eq(S.cs.kb.size, 1, 'csere'); assert(p.kby > 0 && p.kbx === 0 || Math.abs(p.kbx) < 1e-9);
+  for (const [t, x, y] of [[null, 1, 1], [{ kind: 'player', index: 0, ref: p }, NaN, 0], [{ kind: 'player', index: 0, ref: p }, 0, 0], [{ kind: 'player', index: 0, ref: p }, 'a', 1]]) eq(startKnockback(S.cs, t, x, y), false);
+  eq(startKnockback(null, { kind: 'player' }, 1, 1), false); p.kbx = NaN; eq(desiredVelocity(p, { x: 1, y: 0 }).x, p.speed, 'hibás kbx = 0');
+});
+
+test('combat: képesség-bekötés – strike/shoot a hitboxon át, költség, nincs dupla sebzés, detach visszaállít', () => {
+  const S = cb(), reg = createCharacterRegistry(), e = spawnEnemy(S.es, 'grunt', 240, 200); e.state = 'idle';
+  const sys = createAbilitySystem({ reg, hooks: { enemies: (o, r) => enemiesNear(S.es, o, r) } }), ps = S.ps; ps[0].class = 'warrior'; ps[1].class = 'ranger';
+  attachWarrior(sys, { players: ps, enemies: (o, r) => enemiesNear(S.es, o, r), damage: (en, a, i) => damageEnemy(S.es, en, a, i) }); const orig = sys.handlers.get('strike'), origShoot = sys.handlers.get('shoot');
+  const ac = attachCombat(sys, S.cs, { players: ps }); assert(sys.handlers.get('strike') !== orig && typeof sys.handlers.get('shoot') === 'function', 'felülírva');
+  ensurePools(sys, ps[0]); ensurePools(sys, ps[1]); const st0 = poolValue(ps[0], 'stamina').value, r = castAbility(sys, ps, 0, 'strike', { facing: RIGHT }); assert(r.ok, 'strike ok: ' + r.reason); eq(e.hp, 30, 'azonnal nincs sebzés (a hitbox ad)'); assert(poolValue(ps[0], 'stamina').value < st0, 'költség');
+  cstep(S, 0.5); near(e.hp, 30 - 8 * strengthMul(ps[0]), 1e-9, 'egyszeri sebzés'); assert(e.x > 240, 'visszalökés');
+  const far = cb(), fsys = createAbilitySystem({ reg, hooks: { enemies: (o, rr) => enemiesNear(far.es, o, rr) } }); far.ps[0].class = 'warrior'; attachCombat(fsys, far.cs, { players: far.ps }); eq(castAbility(fsys, far.ps, 0, 'strike', { facing: RIGHT }).reason, 'target', 'nincs ellenfél: nincs költség');
+  const f0 = poolValue(ps[1], 'focus').value, sh = castAbility(sys, ps, 1, 'shoot', { facing: RIGHT }); assert(sh.ok && S.cs.shots.length === 1, 'shoot ok: ' + sh.reason); assert(poolValue(ps[1], 'focus').value < f0, 'fókusz-költség');
+  ps[1].x = 100; ps[1].y = 200; e.x = 300; e.y = 200; e.hp = 30; e.health.hp = 30; S.cs.shots[0].x = 100; S.cs.shots[0].y = 200; cstep(S, 1); eq(e.hp, 24, 'a lövedék talált');
+  ac.detach(); eq(sys.handlers.get('strike'), orig); eq(sys.handlers.get('shoot'), origShoot); eq(attachCombat(null, S.cs, null).cs, S.cs);
+  assert(ATTACK_DEFS.strike.kind === 'melee' && ATTACK_DEFS.shoot.kind === 'shot' && Object.isFrozen(ATTACK_DEFS));
+});
+
+test('combat: hibás bemenet – indítás, plafon, dt, szemét-környezet, hibázó figyelő', () => {
+  const S = cb(); for (const bad of [null, { owner: { team: 'x' } }, { x: NaN }, { reach: 0 }, { width: -1 }, { damage: { amount: -1 } }, { damage: null }, { reach: Infinity }]) eq(swing(S, bad === null ? { owner: null } : bad), null, JSON.stringify(bad));
+  eq(startMelee(null, {}), null); for (let i = 0; i < COMBAT_CONFIG.maxAttacks + 5; i++) swing(S); eq(S.cs.attacks.length, COMBAT_CONFIG.maxAttacks, 'plafon');
+  eq(stepCombat(S.cs, S.ctx, NaN).length, 0); eq(stepCombat(S.cs, S.ctx, -1).length, 0); eq(stepCombat(null, {}, DT).length, 0); const t0 = S.cs.time; stepCombat(S.cs, S.ctx, 5); near(S.cs.time - t0, COMBAT_CONFIG.maxDt, 1e-9, 'dt vágva');
+  for (const junk of [null, 5, { players: 5, enemies: 'x', walls: 3 }, { players: [null, {}], healths: [null] }]) { stepCombat(S.cs, junk, DT); } eq(S.cs.lastError, null);
+  const T = cb(), te = spawnEnemy(T.es, 'grunt', 240, 200); te.state = 'idle'; onCombat(T.cs, () => { throw new Error('x'); }); let n = 0; onCombat(T.cs, () => n++); swing(T); cstep(T, 0.4); assert(n >= 2 && T.cs.lastError, 'a hibázó figyelő nem állít meg'); eq(te.hp, 22);
+  eq(combatView(null).attacks.length, 0); const v = combatView(T.cs); assert(Array.isArray(v.shots)); eq(createCombat({ cfg: { iframes: -1, kbDecay: 'x', flashTime: 1 } }).cfg.iframes, 0.6);
+});
+
+test('combat render: ütés-ív, lövedék, szikra, villanás – számok, kivágás', () => {
+  const calls = { fillRect: 0, strokeRect: 0, stroke: 0 }, ctx = { save() {}, restore() {}, beginPath() {}, moveTo() {}, lineTo() {}, fillRect() { calls.fillRect++; }, strokeRect() { calls.strokeRect++; }, stroke() { calls.stroke++; } };
+  const S = cb(), e = spawnEnemy(S.es, 'grunt', 240, 200); e.state = 'idle'; swing(S, { delay: 0.05, active: 0.3 }); startShot(S.cs, { owner: { team: 'player', index: 0 }, x: 100, y: 100, dir: RIGHT, speed: 100, range: 300, damage: { amount: 1, type: 'physical' } });
+  cstep(S, 0.02); eq(drawCombat(ctx, S.cs, 0, 0, 960, 540, {}), 1, 'csak a lövedék (az ütés még windup)'); eq(drawCombat(ctx, S.cs, 0, 0, 960, 540, { debug: true }), 2, 'debug: + windup keret');
+  cstep(S, 0.1); assert(drawCombat(ctx, S.cs, 0, 0, 960, 540, {}) >= 3, 'ív + lövedék + szikra'); eq(drawCombat(ctx, S.cs, 5000, 5000, 960, 540, {}), 0, 'nézeten kívül nincs rajz');
+  assert(drawHitFlashes(ctx, S.cs, 0, 0, 960, 540) >= 1, 'villanás'); eq(drawHitFlashes(ctx, S.cs, 5000, 5000, 960, 540), 0); cstep(S, 0.5); eq(drawHitFlashes(ctx, S.cs, 0, 0, 960, 540), 0, 'lecsengett');
+  eq(drawCombat(null, S.cs, 0, 0, 1, 1), 0); eq(drawHitFlashes(ctx, null, 0, 0, 1, 1), 0);
+});
+
+function combatFuzz(seed) {
+  const rnd = lcg(seed), walls = frame(1200, 900); for (let i = 0; i < 8; i++) walls.push(R(100 + Math.floor(rnd() * 30) * 32, 100 + Math.floor(rnd() * 20) * 32, 32 * (1 + Math.floor(rnd() * 3)), 32));
+  const S = cb({ walls }); S.ps[0].x = 600; S.ps[0].y = 450; S.ps[1].x = 640; S.ps[1].y = 450; for (const p of S.ps) if (collides(p, walls)) { p.x = 600; p.y = 450; }
+  for (let i = 0, t = 0; i < 5 && t < 200; t++) { const x = 60 + rnd() * 1080, y = 60 + rnd() * 780; if (!collides({ x, y, w: 30, h: 30 }, walls) && spawnEnemy(S.es, 'grunt', x, y)) i++; }
+  const last = [[-9, -9], [-9, -9]].map(() => -9), bad = []; S.hs.forEach((h, i) => onHealth(h, ev => { if (ev.type === 'damage') { if (S.f * DT - last[i] < COMBAT_CONFIG.iframes - DT * 1.5) bad.push('iframe ' + i); last[i] = S.f * DT; } })); const env = { walls, healths: S.hs, hurt: makeHurt(S.cs, S.ctx) };
+  for (S.f = 0; S.f < 3000; S.f++) {
+    S.ps.forEach((p, i) => { if (p.dead) return; const a = S.f / 55 + i, nx = p.x + Math.cos(a) * 60 * DT + (p.kbx || 0) * DT, ny = p.y + Math.sin(a * 1.3) * 60 * DT + (p.kby || 0) * DT; if (!collides({ x: nx, y: ny, w: p.w, h: p.h }, walls)) { p.x = nx; p.y = ny; } });
+    if (S.f % 45 === 0) { const i = Math.floor(rnd() * 2), p = S.ps[i], d = [RIGHT, { x: -1, y: 0 }, { x: 0, y: 1 }, { x: 0, y: -1 }][Math.floor(rnd() * 4)]; if (!p.dead) { if (rnd() < 0.5) swing(S, { owner: { team: 'player', index: i }, x: p.x, y: p.y, dir: d }); else startShot(S.cs, { owner: { team: 'player', index: i }, x: p.x, y: p.y, dir: d, speed: 420, range: 300, pierce: Math.floor(rnd() * 2), damage: { amount: 3, type: 'physical', tag: 'ranged' }, knock: 20 }); } }
+    if (S.f % 700 === 650) for (const p of S.ps) if (p.dead) { S.hs[p.index].dead = false; S.hs[p.index].hp = 50; p.dead = false; }
+    stepEnemies(S.es, S.ps, DT, env); stepCombat(S.cs, S.ctx, DT); stepPlayerHealths(S.hs, S.ps, DT);
+    for (const p of S.ps) if (![p.x, p.y, p.kbx || 0, p.kby || 0].every(Number.isFinite)) bad.push('nan p');
+    for (const e of S.es.list) if (![e.x, e.y, e.hp].every(Number.isFinite) || collides(e, walls)) bad.push('enemy ' + (collides(e, walls) ? 'fal' : 'nan'));
+    if (S.cs.attacks.length > COMBAT_CONFIG.maxAttacks || S.cs.shots.length > COMBAT_CONFIG.maxShots || S.cs.fx.length > COMBAT_CONFIG.maxFx) bad.push('plafon');
+    if (S.f % 500 === 100) for (const e of S.es.list.slice(0, 2)) damageEnemy(S.es, e, 1, { player: 0 });
+  }
+  return { bad: bad.slice(0, 4), err: S.cs.lastError || S.es.lastError, sig: JSON.stringify(S.cs.stats) + S.hs.map(h => h.hp.toFixed(2)).join() + S.es.list.map(e => e.hp.toFixed(2)).join() + S.ps.map(p => p.x.toFixed(3)).join() };
+}
+test('combat: fuzz 3000 kocka – nincs NaN/falban, i-frame tartva, plafonok, determinizmus', () => {
+  for (const seed of [21, 22, 23]) { const a = combatFuzz(seed), b = combatFuzz(seed); eq(a.bad.length, 0, 'seed ' + seed + ': ' + a.bad); eq(a.err, null); eq(a.sig, b.sig, 'determinisztikus'); assert(/"hits":[1-9]/.test(a.sig), 'volt találat'); }
+});
