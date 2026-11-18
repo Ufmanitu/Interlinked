@@ -6,9 +6,12 @@ import {
   spawnEnemy, removeEnemy, enemyView, enemiesNear, damageEnemy, pushEnemy, stepEnemies,
 } from './game-enemy.js';
 import { createPlayerHealths } from './game-health.js';
-import { createPlayer } from './game-player.js';
-import { collides } from './game-collision.js';
-import { createWorldStream, warmStream, streamWalls, getStreamTile, findOpenSpot, WORLD_SEED } from './world-stream.js';
+import { createPlayer, PLAYER_SPEED } from './game-player.js';
+import { collides, sweepAxis } from './game-collision.js';
+import { createWorldStream, warmStream, updateStream, streamWalls, getStreamTile, findOpenSpot, WORLD_SEED } from './world-stream.js';
+import { SPAWN_CONFIG, SPAWN_TABLES, auditSpawnTables, spawnPointsInChunk, createSpawner, stepSpawner, spawnActive } from './game-spawn.js'; // S069
+import { loadMacroMap, regionAt } from './world-macro.js';
+import { MACRO_MAP } from './data-macro.js';
 import { isSolidId } from './world-tiles.js';
 
 const T = 32, DT = 1 / 60;
@@ -365,4 +368,146 @@ function combatFuzz(seed) {
 }
 test('combat: fuzz 3000 kocka – nincs NaN/falban, i-frame tartva, plafonok, determinizmus', () => {
   for (const seed of [21, 22, 23]) { const a = combatFuzz(seed), b = combatFuzz(seed); eq(a.bad.length, 0, 'seed ' + seed + ': ' + a.bad); eq(a.err, null); eq(a.sig, b.sig, 'determinisztikus'); assert(/"hits":[1-9]/.test(a.sig), 'volt találat'); }
+});
+
+// ---- S069: két ellenségtípus + régióhoz kötött spawn ----
+const MM = loadMacroMap(MACRO_MAP), SEED = 12014;
+const spEnv = over => ({ tileAt: () => 0, walls: [], safe: [], ...over });
+const mkSp = o => createSpawner({ mm: MM, seed: SEED, ...o });
+const mkEs = (cfg, seed = 5) => createEnemySystem({ reg: createEnemyRegistry(ENEMY_DEFS), seed, cfg });
+function runSp(sp, es, pts, secs, env, dt = 0.25) { const tot = { spawned: 0, despawned: 0, killed: 0 }; for (let i = 0; i < Math.round(secs / dt); i++) { const r = stepSpawner(sp, es, pts, dt, env); tot.spawned += r.spawned; tot.despawned += r.despawned; tot.killed += r.killed; } return tot; }
+const d2 = (e, p) => Math.hypot(e.x - p.x, e.y - p.y);
+
+test('spawn: adat – boar = lassú-erős, field_rat = gyors-gyenge, szövegek HU/EN, tábla-audit', () => {
+  const reg = createEnemyRegistry(ENEMY_DEFS); eq(reg.errors.length, 0, 'érvényes def'); eq(reg.dups.length, 0);
+  const b = getEnemyDef(reg, 'boar'), r = getEnemyDef(reg, 'field_rat');
+  assert(b && r, 'két típus');
+  assert(b.speed < PLAYER_SPEED && PLAYER_SPEED < r.speed, 'a vaddisznó lassabb, a patkány gyorsabb a játékosnál');
+  assert(b.hp > r.hp * 3 && b.damage.amount > r.damage.amount * 2 && b.windup > r.windup * 3 && b.cooldown > r.cooldown && b.knock > r.knock * 3 && b.size > r.size, 'erős vs gyenge');
+  assert(r.fleeHp > 0 && b.fleeHp === 0, 'a patkány megfutamodik');
+  for (const l of ['hu', 'en']) for (const id of ['boar', 'field_rat']) assert(typeof ENEMY_TEXTS[l]['enemy.' + id] === 'string' && ENEMY_TEXTS[l]['enemy.' + id].length > 0, l + ' ' + id);
+  eq(auditSpawnTables(SPAWN_TABLES, reg, MM).length, 0, 'a tábla tiszta');
+  assert(SPAWN_TABLES.meadow.entries.every(e => e.type !== 'grunt') && SPAWN_TABLES.meadow.entries.some(e => e.type === 'boar') && SPAWN_TABLES.meadow.entries.some(e => e.type === 'field_rat'), 'rét: boar + patkány, nincs grunt');
+  const bad = auditSpawnTables({ meadow: { density: 1, respawn: 1, entries: [{ type: 'nope', weight: 1 }, { type: 'boar', weight: 0 }] }, nowhere: { density: 1, respawn: 1, entries: [{ type: 'boar', weight: 1 }] }, x: null }, reg, MM);
+  assert(bad.includes('meadow:nope') && bad.includes('meadow:weight:boar') && bad.includes('nowhere:region') && bad.includes('x:table'), 'hibák: ' + bad.join());
+});
+
+test('spawn: pontok – determinisztikus, régióhoz kötött, egyedi id, tile-közép, chunk-szél', () => {
+  const rd = SPAWN_TABLES.meadow, seen = new Set(), types = new Set(); let total = 0;
+  for (let cx = -3; cx <= 2; cx++) for (let cy = -3; cy <= 2; cy++) {
+    const pts = spawnPointsInChunk(MM, SEED, cx, cy); total += pts.length;
+    assert(pts.length <= rd.density, 'sűrűség');
+    assert(JSON.stringify(pts) === JSON.stringify(spawnPointsInChunk(MM, SEED, cx, cy)), 'determinisztikus');
+    for (const q of pts) {
+      const tx = Math.floor(q.x / 32), ty = Math.floor(q.y / 32), reg = regionAt(MM, tx, ty);
+      assert(reg && reg.id === 'meadow' && q.region === 'meadow', 'a pont a rét régióban: ' + q.id);
+      assert((q.x - 16) % 32 === 0 && (q.y - 16) % 32 === 0, 'tile-közép');
+      assert(tx >= cx * 64 + 2 && tx < cx * 64 + 62 && ty >= cy * 64 + 2 && ty < cy * 64 + 62, 'chunk-szélen belül');
+      assert(!seen.has(q.id) && q.id.startsWith(`${cx},${cy}:s`), 'egyedi id'); seen.add(q.id); types.add(q.type); eq(q.respawn, rd.respawn);
+    }
+  }
+  assert(total > 40, 'elég pont: ' + total); assert(types.has('boar') && types.has('field_rat'), 'mindkét típus előfordul');
+  eq(spawnPointsInChunk(MM, SEED, 2, 0).length, 0, 'erdő: nincs tábla -> nincs pont'); eq(spawnPointsInChunk(MM, SEED, 7, 7).length, 0, 'régión kívül nincs');
+  const other = []; for (let cx = -1; cx <= 0; cx++) for (let cy = -1; cy <= 0; cy++) other.push(JSON.stringify(spawnPointsInChunk(MM, SEED + 1, cx, cy)) !== JSON.stringify(spawnPointsInChunk(MM, SEED, cx, cy)));
+  assert(other.some(Boolean), 'más seed -> más pontok');
+  for (const bad of [[null, SEED, 0, 0], [MM, SEED, 0.5, 0], [MM, SEED, NaN, 0], [MM, SEED, 0, 'a']]) eq(spawnPointsInChunk(...bad).length, 0, 'hibás bemenet');
+  eq(spawnPointsInChunk(MM, SEED, 0, 0, {}).length, 0, 'üres tábla'); eq(spawnPointsInChunk(MM, SEED, 0, 0, null).length, 0, 'null tábla');
+});
+
+test('spawn: távolság-sáv – nem a képen születik (>= minDist), nem túl messze (<= maxDist); régión kívül/játékos nélkül semmi', () => {
+  const es = mkEs(), sp = mkSp(), P = [{ x: 0, y: 0 }], c = SPAWN_CONFIG;
+  const t = runSp(sp, es, P, 6, spEnv()); assert(t.spawned > 5 && es.list.length === t.spawned, 'születnek: ' + t.spawned);
+  for (const e of es.list) { const d = d2(e, P[0]); assert(d >= c.minDist - 1 && d <= c.maxDist + 1, 'sáv: ' + d); assert(e.spawnId && sp.state.get(e.spawnId).enemy === e, 'a pont követi'); }
+  const e2 = mkEs(), s2 = mkSp(); eq(runSp(s2, e2, [{ x: 1e6, y: 1e6 }], 4, spEnv()).spawned, 0, 'régión kívül'); eq(runSp(s2, e2, [], 4, spEnv()).spawned, 0, 'nincs játékos');
+  const e3 = mkEs(), s3 = mkSp(); runSp(s3, e3, [{ x: 0, y: 0 }, { x: 600, y: 0 }], 6, spEnv());
+  for (const e of e3.list) assert(d2(e, { x: 0, y: 0 }) >= c.minDist - 1 && d2(e, { x: 600, y: 0 }) >= c.minDist - 1, 'MINDEN játékostól messze');
+});
+
+test('spawn: elhelyezés – ütköző tile / fal / biztonsági zóna kiesik, a betöltetlen tile vár', () => {
+  const P = [{ x: 0, y: 0 }];
+  let es = mkEs(), sp = mkSp(); eq(runSp(sp, es, P, 6, spEnv({ tileAt: () => 1 })).spawned, 0, 'víz'); assert(sp.stats.bad > 5, 'bad jelölés');
+  es = mkEs(); sp = mkSp(); let loaded = false; const env = spEnv({ tileAt: () => (loaded ? 0 : -1) });
+  eq(runSp(sp, es, P, 3, env).spawned, 0, 'betöltetlen: vár'); assert(sp.stats.deferred > 0 && sp.stats.bad === 0, 'defer, nem bad'); loaded = true;
+  assert(runSp(sp, es, P, 3, env).spawned > 3, 'betöltés után születik');
+  es = mkEs(); sp = mkSp(); eq(runSp(sp, es, P, 6, spEnv({ safe: [{ x: 0, y: 0, r: 5000 }] })).spawned, 0, 'biztonsági zóna (tömb)');
+  es = mkEs(); sp = mkSp(); runSp(sp, es, P, 6, spEnv({ safe: () => [{ x: 0, y: 0, r: 1000 }] })); assert(es.list.length > 0 && es.list.every(e => d2(e, P[0]) > 1000), 'zóna (függvény): kívül marad');
+  es = mkEs(); sp = mkSp(); eq(runSp(sp, es, P, 6, spEnv({ walls: [{ x: -5000, y: -5000, w: 10000, h: 10000 }] })).spawned, 0, 'fal');
+  es = mkEs(); sp = mkSp(); const ring = []; for (let i = 0; i < 40; i++) ring.push({ x: Math.cos(i) * 900 - 30, y: Math.sin(i) * 900 - 30, w: 60, h: 60 });
+  runSp(sp, es, P, 6, spEnv({ walls: ring })); assert(es.list.every(e => !collides({ x: e.x, y: e.y, w: e.w, h: e.h }, ring)), 'nem falban születik');
+});
+
+test('spawn: respawn és követés – halál -> várakozás -> újra kész; elvett ellenfél -> kész', () => {
+  const P = [{ x: 0, y: 0 }], es = mkEs(), sp = mkSp({ cfg: { maxActive: 3 } });
+  runSp(sp, es, P, 3, spEnv()); eq(spawnActive(sp), 3, 'a plafonig születik');
+  const e = es.list[0], id = e.spawnId; damageEnemy(es, e, 9999, { player: 0 }); stepEnemies(es, [], 1 / 60, { walls: [], solidTile: () => false });
+  assert(!es.list.includes(e), 'a halott kikerült'); const r = stepSpawner(sp, es, P, 0.01, spEnv()); eq(r.killed, 1); eq(sp.stats.killed, 1); eq(sp.state.get(id).phase, 'cool');
+  near(sp.state.get(id).at - sp.time, SPAWN_TABLES.meadow.respawn, 1, 'respawn-idő');
+  runSp(sp, es, P, 100, spEnv()); eq(sp.state.get(id).phase, 'cool', '100 mp után még vár');
+  runSp(sp, es, P, 60, spEnv()); assert(sp.state.get(id).phase !== 'cool', '160 mp után kész/él'); eq(spawnActive(sp), 3, 'a hely újra betelt');
+  const e2 = es.list[1], id2 = e2.spawnId; removeEnemy(es, e2); stepSpawner(sp, es, P, 0.01, spEnv()); eq(sp.state.get(id2).phase, 'ready', 'külsőleg elvett -> kész');
+});
+
+test('spawn: despawn – a távoli tétlen ellenfél eltűnik, az üldöző marad; a pont újra kész', () => {
+  const es = mkEs(), sp = mkSp(); runSp(sp, es, [{ x: 0, y: 0 }], 4, spEnv()); const n = es.list.length; assert(n > 3, 'vannak');
+  es.list[0].state = 'chase'; const keep = es.list[0], gone = es.list.slice(1), ids = gone.map(e => e.spawnId);
+  const t = runSp(sp, es, [{ x: 40000, y: 40000 }], 1, spEnv()); eq(t.despawned, n - 1, 'a tétlenek eltűntek');
+  assert(es.list.length === 1 && es.list[0] === keep, 'az üldöző marad'); for (const id of ids) eq(sp.state.get(id).phase, 'ready');
+  const t2 = runSp(sp, es, [{ x: 0, y: 0 }], 4, spEnv()); assert(t2.spawned > 0, 'visszatérve újra születnek');
+});
+
+test('spawn: plafonok – maxActive és az enemy-rendszer maxEnemies-e', () => {
+  const P = [{ x: 0, y: 0 }]; let es = mkEs(), sp = mkSp({ cfg: { maxActive: 5 } }); runSp(sp, es, P, 10, spEnv()); eq(spawnActive(sp), 5); eq(es.list.length, 5);
+  es = mkEs({ maxEnemies: 3 }); sp = mkSp(); runSp(sp, es, P, 10, spEnv()); assert(es.list.length <= 3 && es.list.length > 0, 'maxEnemies: ' + es.list.length);
+  es = mkEs(); sp = mkSp({ cfg: { maxActive: 1e9 } }); runSp(sp, es, P, 10, spEnv()); assert(spawnActive(sp) <= 24 || sp.cfg.maxActive > 24, 'alap-plafon 24'); eq(SPAWN_CONFIG.maxActive, 24);
+});
+
+test('spawn: hibás bemenet – sosem dob, nincs hatás', () => {
+  const es = mkEs(), sp = mkSp(), P = [{ x: 0, y: 0 }], env = spEnv();
+  for (const a of [[null, es, P, 1, env], [sp, null, P, 1, env], [sp, { list: 5 }, P, 1, env], [sp, es, P, NaN, env], [sp, es, P, -1, env], [sp, es, P, 1, null], [sp, es, P, 1, {}],
+    [sp, es, [null, { x: NaN, y: 0 }, { x: 0 }], 1, env], [sp, es, 'x', 1, env]]) { const r = stepSpawner(...a); eq(r.spawned, 0); }
+  eq(es.list.length, 0, 'semmi nem született');
+  const sp2 = mkSp(); stepSpawner(sp2, es, P, 1, spEnv({ tileAt: () => { throw new Error('x'); } })); assert(sp2.lastError instanceof Error, 'a hibázó hook a lastError-ba kerül');
+  eq(createSpawner({ tables: null, mm: null }).tables && typeof createSpawner({ tables: null }).tables, 'object'); eq(runSp(createSpawner({}), es, P, 3, env).spawned, 0, 'makrótérkép nélkül nincs spawn');
+  eq(createSpawner({ mm: MM, cfg: { minDist: -5, maxDist: NaN } }).cfg.minDist, SPAWN_CONFIG.minDist, 'hibás konfig -> alap');
+  eq(spawnActive(null), 0);
+});
+
+test('spawn: a két típus viselkedése valódi AI-val – a patkány előbb ér oda és üt, a vaddisznó nagyobbat üt és lök', () => {
+  const run1 = type => {
+    const p = pl(0, 800, 300), healths = createPlayerHealths([p]), sys = mkSys(), env = { walls: frame(1600, 600), solidTile: (tx, ty) => tx < 0 || ty < 0 || tx >= 50 || ty >= 19, healths };
+    const e = spawnEnemy(sys, type, 950, 300); let first = null, hit = null;
+    run(sys, [p], env, 12, (i, evs) => { for (const ev of evs) if (ev.type === 'hit' && !hit) { hit = ev; first = i; return false; } });
+    return { first, hit, hp: healths[0].hp, e };
+  };
+  const rat = run1('field_rat'), boar = run1('boar');
+  assert(rat.hit && boar.hit, 'mindkettő eltalálja'); assert(rat.first < boar.first, `a patkány előbb: ${rat.first} < ${boar.first}`);
+  eq(rat.hp, 97); eq(boar.hp, 88); const k = h => Math.hypot(h.damage.knockback.x, h.damage.knockback.y);
+  assert(k(boar.hit) > k(rat.hit) * 3, 'a vaddisznó erősebben lök'); near(k(boar.hit), 110, 1e-6); near(k(rat.hit), 18, 1e-6);
+});
+
+function worldRun(frames, seed = WORLD_SEED) {
+  const ws = createWorldStream(seed), spot = findOpenSpot(seed, 0, 0), SP = { x: spot.x + 900, y: spot.y }, P = [createPlayer(0, SP.x, SP.y), createPlayer(1, SP.x + 60, SP.y)];
+  warmStream(ws, P); const es = mkEs(null, 11), sp = createSpawner({ mm: MM, seed }), cs = createCombat(), hs = createPlayerHealths(P), types = new Set(), homes = [];
+  onEnemy(es, ev => { if (ev.type === 'spawn') { types.add(ev.e.type); homes.push(ev.e.home); } });
+  let walls = streamWalls(ws), ver = ws.version; const safe = [{ x: spot.x, y: spot.y, r: 800 }], hurt = makeHurt(cs, { players: P, healths: hs });
+  const solidTile = (tx, ty) => { const id = getStreamTile(ws, tx, ty); return id < 0 || isSolidId(id); };
+  let maxAct = 0, inWall = 0, bad = 0;
+  for (let i = 0; i < frames; i++) {
+    const tgt = es.list.reduce((b, e) => (!b || Math.hypot(e.x - P[0].x, e.y - P[0].y) < Math.hypot(b.x - P[0].x, b.y - P[0].y) ? e : b), null); // a játékosok az ellenfelek felé sétálnak (szkriptelt)
+    if (tgt) for (const p of P) { if (p.dead) continue; const d = Math.hypot(tgt.x - p.x, tgt.y - p.y) || 1; p.x += sweepAxis(p, 'x', ((tgt.x - p.x) / d) * 110 * DT, walls); p.y += sweepAxis(p, 'y', ((tgt.y - p.y) / d) * 110 * DT, walls); }
+    updateStream(ws, P); if (ws.version !== ver) { ver = ws.version; walls = streamWalls(ws); }
+    stepSpawner(sp, es, P, DT, { tileAt: (tx, ty) => getStreamTile(ws, tx, ty), walls, safe });
+    stepEnemies(es, P, DT, { walls, solidTile, healths: hs, hurt }); stepCombat(cs, { players: P, healths: hs, enemySys: es, walls }, DT);
+    stepPlayerHealths(hs, P, DT); maxAct = Math.max(maxAct, spawnActive(sp));
+    if (i % 30 === 0) for (const e of es.list) { if (!Number.isFinite(e.x + e.y)) bad++; if (collides({ x: e.x, y: e.y, w: e.w, h: e.h }, walls)) inWall++; }
+  }
+  return { es, sp, types, homes, spot, maxAct, inWall, bad, hp: hs.map(h => Math.round(h.hp)), snap: JSON.stringify([sp.stats, es.list.map(e => [e.type, Math.round(e.x), Math.round(e.y), e.state])]), P };
+}
+test('spawn: valódi világ – chunk-streaming + régió-spawn + AI + harc 1500 kockán: nincs NaN/falban, plafon, biztonsági zóna, determinizmus', () => {
+  const a = worldRun(1500), b = worldRun(1500);
+  assert(a.sp.stats.spawned > 8, 'születtek: ' + a.sp.stats.spawned); assert(a.types.has('field_rat') && a.types.has('boar'), 'mindkét típus: ' + [...a.types]);
+  eq(a.bad, 0, 'nincs NaN'); eq(a.inWall, 0, 'nincs falban'); assert(a.maxAct <= SPAWN_CONFIG.maxActive, 'plafon');
+  for (const h of a.homes) assert(Math.hypot(h.x - a.spot.x, h.y - a.spot.y) > 800, 'a biztonsági zónán kívül születik');
+  assert(a.es.stats.hits > 0 && a.hp.some(h => h < 100), 'az ellenfelek megsebzik a játékosokat (' + a.hp + ')');
+  eq(a.snap, b.snap, 'determinisztikus'); assert(a.sp.lastError === null && a.es.lastError === null, 'nincs elnyelt hiba: ' + (a.sp.lastError || a.es.lastError));
 });

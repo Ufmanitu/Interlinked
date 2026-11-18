@@ -1,5 +1,5 @@
 // Ellenség-AI (S067). Tiszta logika, DOM és canvas nélkül. Adat + állapotgép + rendszer egy fájlban (a 6 fájl/lépés miatt;
-// az S069 szétvághatja: data-enemies.js). Állapotok: idle, patrol, chase, attack, retreat (+ dead).
+// az S188 szétvághatja: data-enemies.js). Állapotok: idle, patrol, chase, attack, retreat (+ dead).
 // Mozgás: rács-alapú A* (game-pathfind), falak ellen tengelyenkénti söprés (game-collision). Fagyott ellenfél (e.frozen > 0) áll.
 import { DAMAGE_TYPES, createHealth, applyDamage } from './game-health.js';
 import { sweepAxis, collides } from './game-collision.js';
@@ -13,12 +13,21 @@ export const ENEMY_CONFIG = Object.freeze({
   pathRadius: 22, maxNodes: 700, maxEnemies: 128, maxDt: 0.1, switchRatio: 0.75,
 });
 
-// Példa-definíció (az S069 adja a két valódi típust). Mértékegység: px, mp, tile (sight, attackRange, patrol, leash).
+// Definíciók (S069). Mértékegység: px, mp, tile (sight, attackRange, patrol, leash). A két valódi típus az 1. régióhoz (Rét, 1-10. szint):
+// boar = lassú-erős (lassú, hosszú felütés, nagy sebzés + visszalökés, sok HP), field_rat = gyors-gyenge (gyors, rövid felütés, kis sebzés, kevés HP, megfutamodik).
+// A spawn-táblák (régió -> típus) a game-spawn.js-ben vannak. A grunt FEJLESZTŐI/TESZT-báb (nincs spawn-táblában).
 export const ENEMY_DEFS = [
+  { id: 'boar', hp: 60, speed: 58, size: 26, sight: 5, loseSight: 9, attackRange: 1, windup: 0.7, cooldown: 2, damage: { amount: 12, type: 'physical' },
+    knock: 110, patrol: 3, leash: 12, fleeHp: 0, regen: 1, resist: {} },
+  { id: 'field_rat', hp: 12, speed: 130, size: 14, sight: 7, loseSight: 11, attackRange: 0.8, windup: 0.15, cooldown: 0.7, damage: { amount: 3, type: 'physical' },
+    knock: 18, patrol: 5, leash: 16, fleeHp: 0.25, regen: 2, resist: {} },
   { id: 'grunt', hp: 30, speed: 70, size: 20, sight: 6, loseSight: 10, attackRange: 1, windup: 0.4, cooldown: 1.2,
     damage: { amount: 6, type: 'physical' }, knock: 40, patrol: 4, leash: 14, fleeHp: 0, regen: 2, resist: {} },
 ];
-export const ENEMY_TEXTS = { hu: { 'enemy.grunt': 'Zsoldos' }, en: { 'enemy.grunt': 'Grunt' } };
+export const ENEMY_TEXTS = {
+  hu: { 'enemy.boar': 'Vaddisznó', 'enemy.field_rat': 'Mezei patkány', 'enemy.grunt': 'Zsoldos' },
+  en: { 'enemy.boar': 'Wild boar', 'enemy.field_rat': 'Field rat', 'enemy.grunt': 'Grunt' },
+};
 
 const fin = v => typeof v === 'number' && Number.isFinite(v);
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
