@@ -61,6 +61,7 @@ import { SORSKO_CONFIG, createSorsko, stepSorsko, sorskoCollider, ringStrength, 
 import { createSorskoSprites, visibleSorsko, drawSorsko, drawSorskoRing } from './render-sorsko.js';
 import { createMenus, stepMenus, missingViewChunks, menuOpen } from './game-hud.js';
 import { drawHud } from './render-hud.js';
+import { HEALTH_TEXTS, createPlayerHealths, stepPlayerHealths, applyDamage } from './game-health.js';
 import { SAVE_TEXTS, createSaveController, bindSaveKeys, stepSaveToast, runSaveAction } from './game-save.js';
 
 initDebug();
@@ -77,6 +78,7 @@ registerTexts(PROG_TEXTS, 'prog.');           // S047: szint-szövegek (prog.*)
 registerTexts(ACTLOG_TEXTS, 'actlog.');       // S047: napló-export szövegek (actlog.*)
 registerTexts(MENU_TEXTS, 'menu.');           // S049: menü-fülek (térkép, beállítások) szövegei (menu.*)
 registerTexts(CHARSELECT_TEXTS, 'charsel.');   // S063: karakterválasztó szövegei (charsel.*)
+registerTexts(HEALTH_TEXTS, '');              // S066: health.type.*, health.dead, health.hp
 registerTexts(OBSTACLE_TEXTS, '');            // S060: obstacle.<id>, obstacle.tag.<TAG>, act.clear
 for (const l of ['hu', 'en']) for (const k of Object.keys(OBSTACLE_TEXTS[l])) if (k.startsWith('act.')) INTERACT_TEXT[l][k] = OBSTACLE_TEXTS[l][k]; // S060: a prompt az ideiglenes INTERACT_TEXT-ből olvas
 for (const l of ['hu', 'en']) for (const k of Object.keys(STATION_TEXTS[l])) if (k.startsWith('act.')) INTERACT_TEXT[l][k] = STATION_TEXTS[l][k];
@@ -228,7 +230,8 @@ const menuUi = createMenuUi({ actions: {
 } });
 const anims = [createAnim(), createAnim()]; // S064: játékosonként irány + séta-képkocka
 const paperdoll = sharedPaperdoll(); // S064: a karakterválasztó előnézetével közös cache
-const game = { anims, paperdoll, select, obstacles, abilities, menuUi, prog, actlog, skills, craftUi, tradeUi, trade, stations, time: 0, ticks: 0, fps: 0, players, inventories, wallets, ground, camera, split, tether, walls, world, objects, interact, warp, clock, field, sorsko, menus, invUi, nodes };
+const healths = createPlayerHealths(players); // S066: játékosonként Health; p.hp/p.hpMax/p.dead a HUD-nak
+const game = { healths, anims, paperdoll, select, obstacles, abilities, menuUi, prog, actlog, skills, craftUi, tradeUi, trade, stations, time: 0, ticks: 0, fps: 0, players, inventories, wallets, ground, camera, split, tether, walls, world, objects, interact, warp, clock, field, sorsko, menus, invUi, nodes };
 const drawList = [];                           // y-sort lista: játékosok + látható házak
 
 function update(dt) {
@@ -265,6 +268,7 @@ function update(dt) {
   stepNodes(nodes, game.players, inputs, [targetOf(interact, 0), targetOf(interact, 1)], game.inventories, clock.t, dt); // S037: gyűjtés (a SZŰRT bemenet: nyitott menünél nincs interakció)
   stepObstacles(obstacles, dt, { players: game.players, inventories: game.inventories, inputs, targets: [targetOf(interact, 0), targetOf(interact, 1)], tagsOf }); // S060: kivágás (tartott gomb, fejsze) és sötét átjáró (fáklya/sötétlátás); a SZŰRT bemenettel
   game.players.forEach((p, i) => { p.gathering = gatherView(nodes, i) != null; }); // S048: a gyűjtés a következő kockában fogyaszt staminát (tether-system)
+  stepPlayerHealths(healths, game.players, dt); // S066: i-frame időzítő + p.hp/p.hpMax/p.dead szinkron (a HUD ezt olvassa)
   stepActLog(actlog, dt, [activityOf(0), activityOf(1)]); // S047: tevékenység-idő napló
   stepTetherVisual(vis, tether, dt);
   stepCamera(game.camera, game.players[0], game.players[1], dt, camCfg);
@@ -422,4 +426,4 @@ function frame(now) {
 }
 requestAnimationFrame(frame);
 
-window.__game = { anims, paperdoll, select, obstacles, abilities, menuUi, prog, actlog, skills, craftUi, tradeUi, trade, stations, craft: (i, id, n = 1) => craft(inventories[i], getRecipe(recipes, id), stationCtx(stations, players[i], skillsOf(skills, i)), n), game, split, splitRend, input, screen, tether, tc, vis, world, atlas, chunkRend, objects, objSprites, interact, warp, clock, dn, field, sorsko, menus, saveCtl, invUi, inventories, wallets, nodes, ground, drop: (i, id, n = 1) => dropItem(ground, id, n, players[i].x + 48, players[i].y, { toss: true }), give: (i, id, n = 1) => addItem(inventories[i], id, n), pay: (i, n = 1) => deposit(wallets[i], n) }; // give: fejlesztői segéd (a node-ok S037-ben bekötve; a földre dobott tárgy felvétele az S039-ben jön)
+window.__game = { healths, dmg: (i, n, type) => applyDamage(healths[i], { amount: n, type }), anims, paperdoll, select, obstacles, abilities, menuUi, prog, actlog, skills, craftUi, tradeUi, trade, stations, craft: (i, id, n = 1) => craft(inventories[i], getRecipe(recipes, id), stationCtx(stations, players[i], skillsOf(skills, i)), n), game, split, splitRend, input, screen, tether, tc, vis, world, atlas, chunkRend, objects, objSprites, interact, warp, clock, dn, field, sorsko, menus, saveCtl, invUi, inventories, wallets, nodes, ground, drop: (i, id, n = 1) => dropItem(ground, id, n, players[i].x + 48, players[i].y, { toss: true }), give: (i, id, n = 1) => addItem(inventories[i], id, n), pay: (i, n = 1) => deposit(wallets[i], n) }; // give: fejlesztői segéd (a node-ok S037-ben bekötve; a földre dobott tárgy felvétele az S039-ben jön)
