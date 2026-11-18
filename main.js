@@ -72,6 +72,7 @@ import { loadMacroMap } from './world-macro.js';
 import { MACRO_MAP } from './data-macro.js';
 import { isSolidId } from './world-tiles.js';
 import { createCombat, makeHurt, stepCombat, attachCombat } from './game-combat.js';
+import { createLash, stepLash } from './game-tetherlash.js'; // S073: póráz mint fegyver (lendítés; opcionális)
 import { drawCombat, drawHitFlashes } from './render-combat.js';
 import { attachWarrior } from './game-warrior.js';
 import { attachWizard, stepWizard, lightSources } from './game-wizard.js';
@@ -270,8 +271,9 @@ const wizard = attachWizard(abilities, { ...abEnv, flammables: obstacles.flammab
 const ranger = attachRanger(abilities, { ...abEnv, hiddens: createHiddens([]), anchors: createAnchors([]) });
 const healer = attachHealer(abilities, { players, heal: (p, n) => healHealth(healths[p.index], n), cleanse: (p, info) => cleanseStatuses(statuses, info.target) }); // S072: a tisztítás a státuszokat oldja
 attachCombat(abilities, combat, { players }); // felülírja a strike/shoot kezelőjét
+const lash = createLash(); // S073: a feszes, forgó fonal megsebzi az ellenséget (a visszalökés a póráz-rendszerben külön lépés: tether.knock)
 connectObstacles(obstacles, abilities); // ÉGETÉS/TÖRÉS/ROBBANTÁS képesség-tag -> akadály
-const game = { revival, es, loot, combat, spawner, healths, anims, paperdoll, select, obstacles, abilities, menuUi, prog, actlog, skills, craftUi, tradeUi, trade, stations, time: 0, ticks: 0, fps: 0, players, inventories, wallets, ground, camera, split, tether, walls, world, objects, interact, warp, clock, field, sorsko, menus, invUi, nodes };
+const game = { revival, lash, es, loot, combat, spawner, healths, anims, paperdoll, select, obstacles, abilities, menuUi, prog, actlog, skills, craftUi, tradeUi, trade, stations, time: 0, ticks: 0, fps: 0, players, inventories, wallets, ground, camera, split, tether, walls, world, objects, interact, warp, clock, field, sorsko, menus, invUi, nodes };
 const drawList = [];                           // y-sort lista: játékosok + látható házak
 
 function update(dt) {
@@ -314,6 +316,7 @@ function update(dt) {
   stepWizard(wizard, dt); stepRanger(ranger, dt); stepHealer(healer, dt); // S069: fény/égés/fagy, jelölés/kötél, pajzs lejárat
   stepSpawner(spawner, es, streamPoints(warp, game.players), dt, { tileAt: (tx, ty) => getStreamTile(world, tx, ty), walls, safe: spawnSafe }); // S069: régió-spawn (a játékosoktól 640-1800 px-re)
   stepEnemies(es, game.players, dt, { walls, solidTile, healths, hurt }); // S069: AI -> a támadás a combat.hurt-ön át (i-frame, visszalökés)
+  stepLash(lash, { players: game.players, enemySys: es, tether, combat }, dt); // S073: póráz-lendítés (a stepTetherSystem UTÁN: p.vx/vy a tényleges sebesség; a stepCombat ELŐTT: a visszalökést ez a kocka lépi)
   stepCombat(combat, { players: game.players, healths, enemySys: es, walls }, dt); // S068: hitbox/lövedék/visszalökés (a stepEnemies UTÁN)
   stepStatuses(statuses, dt); syncStatusesToPlayers(statuses, game.players); // S072: időzítők, DoT (a Health-en át), p.statuses/p.statusFx; a stepRevive ELŐTT: a DoT-halált még ebben a kockában észleli
   stepRevive(revival, { players: game.players, healths, wallets, inputs: inputs0, speed: j => (game.players[j].class === 'healer' ? 2 : 1) }, dt); // S070: elesés-észlelés, élesztés, visszatérés (a Health-szinkron ELŐTT)
@@ -521,4 +524,4 @@ function frame(now) {
 }
 requestAnimationFrame(frame);
 
-window.__game = { statuses, status: (i, id, secs, stacks) => applyStatus(statuses, i, id, { secs, stacks }), revival, kill: i => killHealth(healths[i]), es, loot, combat, spawner, wizard, ranger, healer, foe: (type, dx = 200, dy = 0) => spawnEnemy(es, type, players[0].x + dx, players[0].y + dy), healths, dmg: (i, n, type) => applyDamage(healths[i], { amount: n, type }), anims, paperdoll, select, obstacles, abilities, menuUi, prog, actlog, skills, craftUi, tradeUi, trade, stations, craft: (i, id, n = 1) => craft(inventories[i], getRecipe(recipes, id), stationCtx(stations, players[i], skillsOf(skills, i)), n), game, split, splitRend, input, screen, tether, tc, vis, world, atlas, chunkRend, objects, objSprites, interact, warp, clock, dn, field, sorsko, menus, saveCtl, invUi, inventories, wallets, nodes, ground, drop: (i, id, n = 1) => dropItem(ground, id, n, players[i].x + 48, players[i].y, { toss: true }), give: (i, id, n = 1) => addItem(inventories[i], id, n), pay: (i, n = 1) => deposit(wallets[i], n) }; // give: fejlesztői segéd (a node-ok S037-ben bekötve; a földre dobott tárgy felvétele az S039-ben jön)
+window.__game = { lash, statuses, status: (i, id, secs, stacks) => applyStatus(statuses, i, id, { secs, stacks }), revival, kill: i => killHealth(healths[i]), es, loot, combat, spawner, wizard, ranger, healer, foe: (type, dx = 200, dy = 0) => spawnEnemy(es, type, players[0].x + dx, players[0].y + dy), healths, dmg: (i, n, type) => applyDamage(healths[i], { amount: n, type }), anims, paperdoll, select, obstacles, abilities, menuUi, prog, actlog, skills, craftUi, tradeUi, trade, stations, craft: (i, id, n = 1) => craft(inventories[i], getRecipe(recipes, id), stationCtx(stations, players[i], skillsOf(skills, i)), n), game, split, splitRend, input, screen, tether, tc, vis, world, atlas, chunkRend, objects, objSprites, interact, warp, clock, dn, field, sorsko, menus, saveCtl, invUi, inventories, wallets, nodes, ground, drop: (i, id, n = 1) => dropItem(ground, id, n, players[i].x + 48, players[i].y, { toss: true }), give: (i, id, n = 1) => addItem(inventories[i], id, n), pay: (i, n = 1) => deposit(wallets[i], n) }; // give: fejlesztői segéd (a node-ok S037-ben bekötve; a földre dobott tárgy felvétele az S039-ben jön)

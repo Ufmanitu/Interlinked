@@ -18,6 +18,7 @@ const MODULES = [
   './game-ability.js', // S054
   './game-warrior.js', './data-character.js', './game-registry.js', './game-race.js', // S055
   './game-status.js', // S072
+  './game-tetherlash.js', // S073
 ];
 const FRAMES = 600;
 const DT = 1 / 60;

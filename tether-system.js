@@ -21,6 +21,13 @@ export const PULL_STAMINA = Object.freeze({ max: 100, cost: 20, regen: 15, resum
 // speed 0 -> ki. minExcess: ennél kisebb túllógást (lebegőpontos zaj) nem korrigál.
 export const REEL_CONFIG = Object.freeze({ speed: 90, minExcess: 0.5 });
 
+// S073: harc és póráz. A visszalökés (p.kbx/p.kby, game-combat) NEM szándék: a bemeneti mozgás UTÁN, külön lépésben (második computeTether)
+// mozog, a társ pozíciója nulla kívánt sebességgel. Így (1) a feszes póráz visszatartja a kilökött/menekülő játékost, a társat pedig viszi
+// (húzás-szorzó = drag · tömeg-arány, a nehezebb társ jobban fékez), (2) a visszalökés sosem költ húzás-staminát, (3) a távolság sosem lépi túl
+// az L_eff-et (a lépésen belül sem): az ellenség nem "vágja el" a pórázt. drag 0 = a társ nem mozdul, a kilökött megáll a korlátnál.
+// cfg.knock = false/null -> régi viselkedés (a visszalökés a kívánt sebességhez adódik). minSpeed: ennél kisebb visszalökést (px/s) nem lépünk.
+export const KNOCK_CONFIG = Object.freeze({ drag: 0.7, massMin: 0.25, massMax: 4, minSpeed: 1 });
+
 // L: szám | {x,y} | függvény(players) -> szám|{x,y} (az S027-től a FieldSystem adja az L_eff-et).
 // k: szám | {a,b} | függvény(players) -> szám|{a,b}: a BÁZIS k (TetherConfig.k); a k-hook ezt szorozza.
 // terrain: szám | függvény(játékos) -> szorzó a húzó helyén (1 = normál; S120 sűrű aljnövényzet, S151 hó stb. köt ide).
@@ -37,6 +44,7 @@ export const TETHER_CONFIG = {
   stamina: PULL_STAMINA,
   act: STAMINA_ACT, // S048: sprint/gyűjtés költség, sprint-szorzó, munka-lassulás (hangolás: S188)
   reel: REEL_CONFIG,
+  knock: KNOCK_CONFIG, // S073
 };
 
 const num = (v, d) => (Number.isFinite(v) ? v : d);
@@ -62,6 +70,18 @@ export function applyKHook(base, players, cfg = TETHER_CONFIG, staminaOn = false
   return { a: clamp01(base.a * f(a, b)), b: clamp01(base.b * f(b, a)) };
 }
 
+// S073: a tömeg (test + teher), a visszalökés húzás-szorzója és a játékos visszalökés-sebessége.
+const massOf = p => Math.max(0.01, Math.max(0, num(p.weight, 1)) + Math.max(0, num(p.load, 0)));
+/** A kilökött játékos húzás-szorzója a társra (0..1): drag · clamp(kilökött tömege / társ tömege). */
+export function knockK(knocked, partner, kc = KNOCK_CONFIG) {
+  const c = kc || KNOCK_CONFIG, r = Math.min(num(c.massMax, 4), Math.max(num(c.massMin, 0.25), massOf(knocked) / massOf(partner)));
+  return clamp01(Math.max(0, num(c.drag, 0.7)) * r);
+}
+const knockOf = (p, kc) => {
+  const x = num(p.kbx, 0), y = num(p.kby, 0);
+  return Math.hypot(x, y) >= num(kc.minSpeed, 1) ? { x, y } : { x: 0, y: 0 };
+};
+
 // Régi API (S010): csak a húzás-költség; az S048-tól a game-stamina.stepStamina vékony burkolója (azonos viselkedés).
 export function stepPullStamina(players, mode, dt, enabled, cfg = PULL_STAMINA) {
   stepStamina(players, mode, null, dt, enabled, cfg, STAMINA_ACT);
@@ -81,7 +101,22 @@ export function createTetherSystem(cfg = {}) {
     stamina: { a: full(), b: full() },      // az utolsó lépés húzás-staminája játékosonként (HUD)
     sprint: [false, false],                 // az utolsó lépésben sprintelt-e (A, B)
     blocked: { a: { x: false, y: false }, b: { x: false, y: false } }, // az utolsó lépésben a fal levágta-e a mozgást
+    knock: { mode: { x: 'free', y: 'free' }, k: { a: 0, b: 0 }, active: false }, // S073: az utolsó lépés visszalökés-lépése (active: volt-e)
   };
+}
+
+// Egy póráz-eredmény alkalmazása (fal nélkül egyszerű integrálás; falnál: ütközés előbb, póráz utána). -> blocked.
+function advance(pa, pb, t, dt, walls, L) {
+  if (walls && walls.length && dt > 0) {
+    const ax = pa.x, ay = pa.y, bx = pb.x, by = pb.y;
+    const blocked = moveWithWalls(pa, pb, t.a, t.b, dt, walls, L);
+    pa.vx = (pa.x - ax) / dt; pa.vy = (pa.y - ay) / dt; // tényleges sebesség
+    pb.vx = (pb.x - bx) / dt; pb.vy = (pb.y - by) / dt;
+    return blocked;
+  }
+  applyVelocity(pa, t.a.x, t.a.y, dt);
+  applyVelocity(pb, t.b.x, t.b.y, dt);
+  return { a: { x: false, y: false }, b: { x: false, y: false } };
 }
 
 function resolve(v, players) {
@@ -133,20 +168,33 @@ export function stepTetherSystem(sys, players, inputs, dt) {
   const sprint = players.map((p, i) => wantsSprint(inputs[i], act) && canSprint(p));
   const savedMul = players.map(p => p.speedMul);
   players.forEach((p, i) => { if (sprint[i]) p.speedMul = num(p.speedMul, 1) * act.sprintMul; });
+  // S073: a visszalökés nem szándék: a bemeneti lépésből kivesszük (a desiredVelocity a p.kbx/kby-t adná hozzá), külön lépésben mozog
+  const kc = sys.cfg.knock && typeof sys.cfg.knock === 'object' ? sys.cfg.knock : null;
+  const savedKb = players.map(p => [p.kbx, p.kby]);
+  if (kc) players.forEach(p => { p.kbx = 0; p.kby = 0; });
   const va = desiredVelocity(pa, inputs[0] || {});
   const vb = desiredVelocity(pb, inputs[1] || {});
   players.forEach((p, i) => { if (savedMul[i] === undefined) delete p.speedMul; else p.speedMul = savedMul[i]; p.sprinting = sprint[i]; });
+  if (kc) players.forEach((p, i) => { p.kbx = savedKb[i][0]; p.kby = savedKb[i][1]; if (p.kbx === undefined) delete p.kbx; if (p.kby === undefined) delete p.kby; });
+  const x0 = pa.x, y0 = pa.y, x1 = pb.x, y1 = pb.y;
   const t = computeTether({ a: pa, b: pb, va, vb, L, k, dt });
   const walls = sys.cfg.walls;
-  if (walls && walls.length && dt > 0) {
-    const ax = pa.x, ay = pa.y, bx = pb.x, by = pb.y;
-    sys.blocked = moveWithWalls(pa, pb, t.a, t.b, dt, walls, L);
-    pa.vx = (pa.x - ax) / dt; pa.vy = (pa.y - ay) / dt; // tényleges sebesség
-    pb.vx = (pb.x - bx) / dt; pb.vy = (pb.y - by) / dt;
-  } else {
-    applyVelocity(pa, t.a.x, t.a.y, dt);
-    applyVelocity(pb, t.b.x, t.b.y, dt);
-    sys.blocked = { a: { x: false, y: false }, b: { x: false, y: false } };
+  sys.blocked = advance(pa, pb, t, dt, walls, L);
+  // S073: visszalökés-lépés (a bemeneti mozgás UTÁN; a társ kívánt sebessége 0, így a feszes póráz viszi; nem költ staminát)
+  sys.knock = { mode: { x: 'free', y: 'free' }, k: { a: 0, b: 0 }, active: false };
+  t.knock = null;
+  if (kc && dt > 0) {
+    const ka = knockOf(pa, kc), kb = knockOf(pb, kc);
+    if (ka.x || ka.y || kb.x || kb.y) {
+      const kk = { a: knockK(pa, pb, kc), b: knockK(pb, pa, kc) };
+      const t2 = computeTether({ a: pa, b: pb, va: ka, vb: kb, L, k: kk, dt });
+      const b2 = advance(pa, pb, t2, dt, walls, L);
+      for (const w of ['a', 'b']) for (const ax of ['x', 'y']) sys.blocked[w][ax] = sys.blocked[w][ax] || b2[w][ax];
+      pa.vx = (pa.x - x0) / dt; pa.vy = (pa.y - y0) / dt; // a teljes lépés tényleges sebessége (bemenet + visszalökés)
+      pb.vx = (pb.x - x1) / dt; pb.vy = (pb.y - y1) / dt;
+      sys.knock = { mode: t2.mode, k: kk, active: true };
+      t.knock = t2;
+    }
   }
   reelIn(pa, pb, L, dt, walls, sys.cfg.reel);
   stepStamina(players, t.mode, { sprint, gather: players.map(p => !!p.gathering) }, dt, staminaOn, sys.cfg.stamina, act); // p.gathering: a main.js állítja a gyűjtés után

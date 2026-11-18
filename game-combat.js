@@ -98,7 +98,7 @@ export function startKnockback(cs, target, kx, ky) {
   cs.stats.knocks++; return true;
 }
 export const flashAlpha = (cs, target) => { const f = cs && cs.flash.get(keyOf(target)); return f ? clamp(f.t / cs.cfg.flashTime, 0, 1) : 0; };
-function flashSpark(cs, target, x, y, big) {
+export function flashSpark(cs, target, x, y, big) { // S073: a póráz-lendítés is ezt használja
   cs.flash.set(keyOf(target), { t: cs.cfg.flashTime, ref: target.ref, kind: target.kind });
   cs.fx.push({ kind: 'spark', x, y, t: 0, max: cs.cfg.sparkTime, big: !!big }); if (cs.fx.length > cs.cfg.maxFx) cs.fx.shift();
 }
