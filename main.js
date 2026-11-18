@@ -48,6 +48,8 @@ import { MENU_TEXTS, createMenuUi, routeMenuInputs, applyMenuClose, stepMenuUi, 
 import { drawMenuPanels } from './render-menu.js'; // S049
 import { CHARSELECT_TEXTS, createCharSelect, stepCharSelect, finishCharSelect } from './game-charselect.js'; // S063: karakterválasztó (induláskor)
 import { drawCharSelect } from './render-charselect.js'; // S063
+import { createAnim, stepAnim } from './game-paperdoll.js'; // S064: paperdoll (irány + séta-animáció)
+import { sharedPaperdoll, drawPlayerDoll } from './render-paperdoll.js'; // S064
 import { createWarpSystem, warpProvider, warpColliders, handleWarpEvent, stepWarp, streamPoints, warpWhere } from './world-warp.js';
 import { visibleHouses, drawHouse, drawPockets } from './render-warp.js';
 import { createGameClock, stepClock, clockInfo, bindClockKeys } from './game-clock.js';
@@ -224,7 +226,9 @@ const menuUi = createMenuUi({ actions: {
   import: () => bg(runSaveAction(saveCtl, 'import')),
   log: () => { saveActLog(actlog); copyText(exportActLogText(actlog, (k, p) => t('actlog.' + k, p))); },
 } });
-const game = { select, obstacles, abilities, menuUi, prog, actlog, skills, craftUi, tradeUi, trade, stations, time: 0, ticks: 0, fps: 0, players, inventories, wallets, ground, camera, split, tether, walls, world, objects, interact, warp, clock, field, sorsko, menus, invUi, nodes };
+const anims = [createAnim(), createAnim()]; // S064: játékosonként irány + séta-képkocka
+const paperdoll = sharedPaperdoll(); // S064: a karakterválasztó előnézetével közös cache
+const game = { anims, paperdoll, select, obstacles, abilities, menuUi, prog, actlog, skills, craftUi, tradeUi, trade, stations, time: 0, ticks: 0, fps: 0, players, inventories, wallets, ground, camera, split, tether, walls, world, objects, interact, warp, clock, field, sorsko, menus, invUi, nodes };
 const drawList = [];                           // y-sort lista: játékosok + látható házak
 
 function update(dt) {
@@ -256,6 +260,7 @@ function update(dt) {
   syncEncumbrance(game.players, game.inventories); // a teher (p.load a k-hookba, p.speedMul a saját sebességbe) a póráz-lépés előtt
   stepTetherSystem(tether, game.players, inputs, dt);
   stepInteraction(interact, game.players, inputs, dt); // a mozgás után: a zóna a végleges pozícióhoz igazodik
+  for (let i = 0; i < 2; i++) stepAnim(anims[i], game.players[i], interact.players[i] && interact.players[i].facing, dt); // S064: a tényleges sebesség (póráz után) + facing
   stepAbilities(abilities, game.players, inputs, [interact.players[0] && interact.players[0].facing, interact.players[1] && interact.players[1].facing], dt, { inventories: game.inventories }); // S054: képesség-gombok (a SZŰRT bemenet: nyitott menünél nincs használat)
   stepNodes(nodes, game.players, inputs, [targetOf(interact, 0), targetOf(interact, 1)], game.inventories, clock.t, dt); // S037: gyűjtés (a SZŰRT bemenet: nyitott menünél nincs interakció)
   stepObstacles(obstacles, dt, { players: game.players, inventories: game.inventories, inputs, targets: [targetOf(interact, 0), targetOf(interact, 1)], tagsOf }); // S060: kivágás (tartott gomb, fejsze) és sötét átjáró (fáklya/sötétlátás); a SZŰRT bemenettel
@@ -317,6 +322,7 @@ function drawEntity(ctx, e, ox, oy) {
 }
 
 function drawPlayer(ctx, p, ox, oy) {
+  if (drawPlayerDoll(ctx, paperdoll, p, anims[p.index] || anims[0], ox, oy)) return; // S064: rétegezett karakter; hiba esetén a greybox négyzet
   ctx.fillStyle = p.color;
   ctx.fillRect(Math.round(p.x - p.w / 2) - ox, Math.round(p.y - p.h / 2) - oy, p.w, p.h);
 }
@@ -416,4 +422,4 @@ function frame(now) {
 }
 requestAnimationFrame(frame);
 
-window.__game = { select, obstacles, abilities, menuUi, prog, actlog, skills, craftUi, tradeUi, trade, stations, craft: (i, id, n = 1) => craft(inventories[i], getRecipe(recipes, id), stationCtx(stations, players[i], skillsOf(skills, i)), n), game, split, splitRend, input, screen, tether, tc, vis, world, atlas, chunkRend, objects, objSprites, interact, warp, clock, dn, field, sorsko, menus, saveCtl, invUi, inventories, wallets, nodes, ground, drop: (i, id, n = 1) => dropItem(ground, id, n, players[i].x + 48, players[i].y, { toss: true }), give: (i, id, n = 1) => addItem(inventories[i], id, n), pay: (i, n = 1) => deposit(wallets[i], n) }; // give: fejlesztői segéd (a node-ok S037-ben bekötve; a földre dobott tárgy felvétele az S039-ben jön)
+window.__game = { anims, paperdoll, select, obstacles, abilities, menuUi, prog, actlog, skills, craftUi, tradeUi, trade, stations, craft: (i, id, n = 1) => craft(inventories[i], getRecipe(recipes, id), stationCtx(stations, players[i], skillsOf(skills, i)), n), game, split, splitRend, input, screen, tether, tc, vis, world, atlas, chunkRend, objects, objSprites, interact, warp, clock, dn, field, sorsko, menus, saveCtl, invUi, inventories, wallets, nodes, ground, drop: (i, id, n = 1) => dropItem(ground, id, n, players[i].x + 48, players[i].y, { toss: true }), give: (i, id, n = 1) => addItem(inventories[i], id, n), pay: (i, n = 1) => deposit(wallets[i], n) }; // give: fejlesztői segéd (a node-ok S037-ben bekötve; a földre dobott tárgy felvétele az S039-ben jön)

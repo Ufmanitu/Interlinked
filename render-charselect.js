@@ -1,7 +1,8 @@
 // render-charselect.js (S063) – a karakterválasztó rajza: két panel (faj- és kaszt-lista, előnézet, leírás, statok, képességek), alul súgó.
-// Importja: i18n (t), game-charselect (charView). Az előnézet kódból rajzolt helyőrző figura (faj = bőrszín/testméret, kaszt = ruhaszín); az S064 paperdoll cseréli.
+// Importja: i18n (t), game-charselect (charView), render-paperdoll. Az előnézet S064-től a valódi paperdoll (2x, sétáló figura); ha a vászon nem tud képet rajzolni, a régi helyőrző figura marad.
 import { t as defaultT } from './i18n.js';
 import { charView } from './game-charselect.js';
+import { sharedPaperdoll, drawPreviewDoll } from './render-paperdoll.js';
 
 export const CHARSEL_STYLE = Object.freeze({
   panelW: 448, panelH: 468, panelY: 40, margin: 16, pad: 12, rowH: 22, listW: 140, gap: 8, abIndent: 80,
@@ -30,11 +31,17 @@ export function wrapText(ctx, text, width, maxLines = 99) {
 
 export const panelRect = (i, st = CHARSEL_STYLE) => ({ x: st.margin + (i === 1 ? 1 : 0) * (st.panelW + 32), y: st.panelY, w: st.panelW, h: st.panelH });
 
-/** Helyőrző előnézet-figura (a (x,y) a bal-felső sarok, 64x72 doboz). */
-export function drawPreview(ctx, x, y, raceId, classId, st = CHARSEL_STYLE) {
+/** Előnézet (a (x,y) a bal-felső sarok, 64x80 doboz): paperdoll, t = idő (mp) a séta-animációhoz; kép nélküli vásznon helyőrző figura. */
+export function drawPreview(ctx, x, y, raceId, classId, st = CHARSEL_STYLE, t = 0) {
+  ctx.fillStyle = st.edge; ctx.fillRect(x, y, 64, 80);
+  if (drawPreviewDoll(ctx, sharedPaperdoll(), raceId, classId, x, y, t)) return;
+  drawPlaceholder(ctx, x, y, raceId, classId, st);
+}
+
+/** Helyőrző figura (az S063 előnézete; tartalék). */
+function drawPlaceholder(ctx, x, y, raceId, classId, st) {
   const b = st.build[raceId] || { w: 1, h: 1 }, skin = st.skin[raceId] || st.fallback, cloth = st.cloth[classId] || st.fallback;
   const bw = Math.round(28 * b.w), bh = Math.round(30 * b.h), hs = Math.round(18 * b.w), cx = x + 32, base = y + 70;
-  ctx.fillStyle = st.edge; ctx.fillRect(x, y, 64, 72);
   ctx.fillStyle = '#1b2438'; ctx.fillRect(cx - 20, base - 2, 40, 2);
   ctx.fillStyle = '#2a2a3a'; ctx.fillRect(cx - Math.round(bw / 2) + 2, base - 10, 8, 8); ctx.fillRect(cx + Math.round(bw / 2) - 10, base - 10, 8, 8); // lábak
   ctx.fillStyle = cloth; ctx.fillRect(cx - Math.round(bw / 2), base - 10 - bh, bw, bh); // törzs
@@ -73,7 +80,7 @@ function drawPanel(ctx, cs, i, tr, st) {
   drawList(ctx, x0, ly, tr('charsel.list.race'), v.races, v.raceIndex, v.stage === 'race', v.stage !== 'race', color, tr, st);
   drawList(ctx, x0, ly + 14 + v.races.length * st.rowH + 12, tr('charsel.list.class'), v.classes, v.classIndex, v.stage === 'class', v.stage === 'ready', color, tr, st);
   // Jobb oszlop: előnézet, nevek, erőforrás, leírások, statok, passzívok
-  drawPreview(ctx, rx, ly, v.race ? v.race.id : '', v.cls ? v.cls.id : '', st);
+  drawPreview(ctx, rx, ly, v.race ? v.race.id : '', v.cls ? v.cls.id : '', st, Date.now() / 1000);
   ctx.font = '14px monospace'; ctx.fillStyle = st.title;
   ctx.fillText(v.race ? String(tr(v.race.nameKey)) : '-', rx + 76, ly + 2);
   ctx.fillText(v.cls ? String(tr(v.cls.nameKey)) : '-', rx + 76, ly + 22);
