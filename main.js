@@ -61,7 +61,8 @@ import { SORSKO_CONFIG, createSorsko, stepSorsko, sorskoCollider, ringStrength, 
 import { createSorskoSprites, visibleSorsko, drawSorsko, drawSorskoRing } from './render-sorsko.js';
 import { createMenus, stepMenus, missingViewChunks, menuOpen } from './game-hud.js';
 import { drawHud } from './render-hud.js';
-import { HEALTH_TEXTS, createPlayerHealths, stepPlayerHealths, applyDamage, heal as healHealth } from './game-health.js';
+import { HEALTH_TEXTS, createPlayerHealths, stepPlayerHealths, applyDamage, killHealth, heal as healHealth } from './game-health.js';
+import { REVIVE_TEXTS, createRevive, onRevive, reviveGate, stepRevive, reviveView } from './game-revive.js'; // S070: elesés, újraélesztés, visszatérés
 import { ENEMY_TEXTS, createEnemySystem, spawnEnemy, stepEnemies, enemiesNear, damageEnemy, pushEnemy } from './game-enemy.js'; // S069: ellenfelek + régióhoz kötött spawn + harc
 import { createSpawner, stepSpawner } from './game-spawn.js';
 import { loadMacroMap } from './world-macro.js';
@@ -91,6 +92,7 @@ registerTexts(MENU_TEXTS, 'menu.');           // S049: menü-fülek (térkép, b
 registerTexts(CHARSELECT_TEXTS, 'charsel.');   // S063: karakterválasztó szövegei (charsel.*)
 registerTexts(ENEMY_TEXTS, '');              // S069: enemy.<id>
 registerTexts(HEALTH_TEXTS, '');              // S066: health.type.*, health.dead, health.hp
+registerTexts(REVIVE_TEXTS, '');              // S070: revive.hold, revive.wipe
 registerTexts(OBSTACLE_TEXTS, '');            // S060: obstacle.<id>, obstacle.tag.<TAG>, act.clear
 for (const l of ['hu', 'en']) for (const k of Object.keys(OBSTACLE_TEXTS[l])) if (k.startsWith('act.')) INTERACT_TEXT[l][k] = OBSTACLE_TEXTS[l][k]; // S060: a prompt az ideiglenes INTERACT_TEXT-ből olvas
 for (const l of ['hu', 'en']) for (const k of Object.keys(STATION_TEXTS[l])) if (k.startsWith('act.')) INTERACT_TEXT[l][k] = STATION_TEXTS[l][k];
@@ -243,6 +245,10 @@ const menuUi = createMenuUi({ actions: {
 const anims = [createAnim(), createAnim()]; // S064: játékosonként irány + séta-képkocka
 const paperdoll = sharedPaperdoll(); // S064: a karakterválasztó előnézetével közös cache
 const healths = createPlayerHealths(players); // S066: játékosonként Health; p.hp/p.hpMax/p.dead a HUD-nak
+// S070: az elesett játékos nem game over: a társ a közelben tartott interakció-gombbal élesztheti (a gyógyító 2x gyorsabban); mindketten elesve / lejárt idő -> vissza a Sorskőhöz (kis pénz-büntetés)
+const revival = createRevive({ checkpoint: { id: 'sorsko', x: spot.x, y: spot.y } });
+let wipeToast = 0; // mp: a visszatérés üzenete
+onRevive(revival, ev => { if (ev.type === 'wipe') { wipeToast = 3; afterLoad(); } }); // a kamera, a nézetek és a chunkok a ponthoz ugranak
 // S069: ellenfelek (rácsos A* AI), régióhoz kötött spawn, harc (hitbox/lövedék/visszalökés) és a kaszt-képességek hatása (a class-modulok UTÁN az attachCombat).
 const es = createEnemySystem({ seed: WORLD_SEED });
 const combat = createCombat();
@@ -257,7 +263,7 @@ const ranger = attachRanger(abilities, { ...abEnv, hiddens: createHiddens([]), a
 const healer = attachHealer(abilities, { players, heal: (p, n) => healHealth(healths[p.index], n) });
 attachCombat(abilities, combat, { players }); // felülírja a strike/shoot kezelőjét
 connectObstacles(obstacles, abilities); // ÉGETÉS/TÖRÉS/ROBBANTÁS képesség-tag -> akadály
-const game = { es, combat, spawner, healths, anims, paperdoll, select, obstacles, abilities, menuUi, prog, actlog, skills, craftUi, tradeUi, trade, stations, time: 0, ticks: 0, fps: 0, players, inventories, wallets, ground, camera, split, tether, walls, world, objects, interact, warp, clock, field, sorsko, menus, invUi, nodes };
+const game = { revival, es, combat, spawner, healths, anims, paperdoll, select, obstacles, abilities, menuUi, prog, actlog, skills, craftUi, tradeUi, trade, stations, time: 0, ticks: 0, fps: 0, players, inventories, wallets, ground, camera, split, tether, walls, world, objects, interact, warp, clock, field, sorsko, menus, invUi, nodes };
 const drawList = [];                           // y-sort lista: játékosok + látható házak
 
 function update(dt) {
@@ -277,7 +283,9 @@ function update(dt) {
   const raw = [input.get(0), input.get(1)];
   const mroute = routeMenuInputs(menuUi, tradeUi, craftUi, trade, menus, raw); // S049: a trade fül utáni két fül (térkép, beállítások) és a zárás; az extra fülön a lánc üres bemenetet kap
   const route = applyMenuClose(menuUi, routeCraftInputs(craftUi, menus, routeTradeInputs(tradeUi, trade, craftUi, menus, mroute.raws))); // S042: menü-fül körforgás (inventory -> craft -> zár); a craft fülön az inventory-rendszerek üres bemenetet kapnak
-  const inputs = stepMenus(menus, route.menu); // nyitott menünél a karakter áll (nincs mozgás/interakció), de a pórázon húzható
+  const inputs0 = stepMenus(menus, route.menu);
+  const inputs = reviveGate(revival, inputs0, game.players); // S070: az elesett bemenete üres, az élesztő gombja el van nyelve
+  // nyitott menünél a karakter áll (nincs mozgás/interakció), de a pórázon húzható
   stepDropInput(ground, invUi, menus, route.inv, game.inventories, game.players); // S039: eldobás a stepInvUi ELŐTT (a fogás/kijelölés állapota még a régi)
   const placed = stepPlaceInput(stations, invUi, menus, route.inv, game.inventories, game.players, [interact.players[0] && interact.players[0].facing, interact.players[1] && interact.players[1].facing], walls); // S041: felállítás (menü nyitva, 1. képesség a kurzor alatti állomás-tárgyon); a gombnyomást elnyeli
   stepInvUi(invUi, menus, placed.raws, game.inventories, dt); // S035: az inventory UI a NYERS bemenetet kapja (a szűrt nyitva nullázott)
@@ -298,6 +306,8 @@ function update(dt) {
   stepSpawner(spawner, es, streamPoints(warp, game.players), dt, { tileAt: (tx, ty) => getStreamTile(world, tx, ty), walls, safe: spawnSafe }); // S069: régió-spawn (a játékosoktól 640-1800 px-re)
   stepEnemies(es, game.players, dt, { walls, solidTile, healths, hurt }); // S069: AI -> a támadás a combat.hurt-ön át (i-frame, visszalökés)
   stepCombat(combat, { players: game.players, healths, enemySys: es, walls }, dt); // S068: hitbox/lövedék/visszalökés (a stepEnemies UTÁN)
+  stepRevive(revival, { players: game.players, healths, wallets, inputs: inputs0, speed: j => (game.players[j].class === 'healer' ? 2 : 1) }, dt); // S070: elesés-észlelés, élesztés, visszatérés (a Health-szinkron ELŐTT)
+  if (wipeToast > 0) wipeToast -= dt;
   stepPlayerHealths(healths, game.players, dt); // S066: i-frame időzítő + p.hp/p.hpMax/p.dead szinkron (a HUD ezt olvassa)
   stepActLog(actlog, dt, [activityOf(0), activityOf(1)]); // S047: tevékenység-idő napló
   stepTetherVisual(vis, tether, dt);
@@ -368,6 +378,11 @@ function drawEnemy(ctx, e, ox, oy) {
 }
 
 function drawPlayer(ctx, p, ox, oy) {
+  if (p.dead) ctx.globalAlpha = 0.45; // S070: az elesett karakter halvány
+  try { drawPlayerBody(ctx, p, ox, oy); } finally { ctx.globalAlpha = 1; }
+}
+
+function drawPlayerBody(ctx, p, ox, oy) {
   if (drawPlayerDoll(ctx, paperdoll, p, anims[p.index] || anims[0], ox, oy)) return; // S064: rétegezett karakter; hiba esetén a greybox négyzet
   ctx.fillStyle = p.color;
   ctx.fillRect(Math.round(p.x - p.w / 2) - ox, Math.round(p.y - p.h / 2) - oy, p.w, p.h);
@@ -394,6 +409,22 @@ function drawObstacles(ctx, o, vw, vh) {
   }
 }
 
+// S070 (greybox): az elesett játékos fölött a hátralévő idő, az élesztés-sáv és a súgó
+function drawRevive(ctx, o, vw, vh) {
+  for (let i = 0; i < 2; i++) {
+    const v = reviveView(revival, i), p = game.players[i];
+    if (!v.downed || !p) continue;
+    const cx = Math.round(p.x) - o.x, y = Math.round(p.y - p.h / 2) - o.y - 30;
+    if (cx < -80 || cx > vw + 80 || y < -40 || y > vh + 40) continue;
+    ctx.font = '10px monospace'; ctx.textBaseline = 'bottom'; ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffffff'; ctx.fillText(`${t('health.dead')} ${Math.ceil(v.secs)}`, cx, y - 12);
+    ctx.fillStyle = 'rgba(255,255,255,0.75)'; ctx.fillText(t('revive.hold'), cx, y - 1);
+    ctx.fillStyle = 'rgba(8,12,20,0.7)'; ctx.fillRect(cx - 21, y + 1, 42, 6);
+    ctx.fillStyle = '#e8c24a'; ctx.fillRect(cx - 20, y + 2, Math.round(40 * v.progress), 4);
+    ctx.textAlign = 'left';
+  }
+}
+
 function renderView(ctx, o, vw, vh, ci) {
   drawChunks(ctx, chunkRend, world, o.x, o.y, vw, vh);
   drawPockets(ctx, warp, o.x, o.y, vw, vh);
@@ -410,6 +441,7 @@ function renderView(ctx, o, vw, vh, ci) {
   drawYSorted(ctx, objSprites, objects, drawList, o.x, o.y, vw, vh, drawEntity);
   drawCombat(ctx, combat, o.x, o.y, vw, vh, { debug: tc.hud }); // S068/S069: ütés-ív, lövedék, szikra
   drawHitFlashes(ctx, combat, o.x, o.y, vw, vh);
+  drawRevive(ctx, o, vw, vh); // S070
   drawDayNight(ctx, dn, ci.minuteOfDay, vw, vh); // a promptok a színezés fölé kerülnek
   drawInteractPrompts(ctx, interact, o.x, o.y, vw, vh, { debug: tc.hud, lang: currentLang() }); // promptok a tárgyak fölött, zónák a debug HUD-dal
   drawNodeBars(ctx, nodes, o.x, o.y, vw, vh); // S037: gyűjtés-sáv a célpont lába alatt
@@ -440,6 +472,12 @@ function render() {
   drawMenuPanels(ctx, menuUi, menus, game.players, VIRTUAL_W, VIRTUAL_H); // S049: térkép- és beállítások-fül
   if (tc.hud) drawTetherHud(ctx, 8, 28);
   if (saveCtl.toast) drawSaveToast(ctx, saveCtl.toast);
+  if (wipeToast > 0) { // S070: visszatérés-üzenet
+    ctx.font = '14px monospace'; ctx.textBaseline = 'middle'; ctx.textAlign = 'center';
+    const m = t('revive.wipe'), w = Math.ceil(ctx.measureText(m).width) + 20;
+    ctx.fillStyle = 'rgba(70,14,14,0.88)'; ctx.fillRect(Math.round(VIRTUAL_W / 2 - w / 2), 52, w, 26);
+    ctx.fillStyle = '#ffffff'; ctx.fillText(m, VIRTUAL_W / 2, 65); ctx.textAlign = 'left';
+  }
 }
 
 // Mentés-értesítés (alul középen, a HUD-panelek között); zöld = siker, piros = hiba.
@@ -471,4 +509,4 @@ function frame(now) {
 }
 requestAnimationFrame(frame);
 
-window.__game = { es, combat, spawner, wizard, ranger, healer, foe: (type, dx = 200, dy = 0) => spawnEnemy(es, type, players[0].x + dx, players[0].y + dy), healths, dmg: (i, n, type) => applyDamage(healths[i], { amount: n, type }), anims, paperdoll, select, obstacles, abilities, menuUi, prog, actlog, skills, craftUi, tradeUi, trade, stations, craft: (i, id, n = 1) => craft(inventories[i], getRecipe(recipes, id), stationCtx(stations, players[i], skillsOf(skills, i)), n), game, split, splitRend, input, screen, tether, tc, vis, world, atlas, chunkRend, objects, objSprites, interact, warp, clock, dn, field, sorsko, menus, saveCtl, invUi, inventories, wallets, nodes, ground, drop: (i, id, n = 1) => dropItem(ground, id, n, players[i].x + 48, players[i].y, { toss: true }), give: (i, id, n = 1) => addItem(inventories[i], id, n), pay: (i, n = 1) => deposit(wallets[i], n) }; // give: fejlesztői segéd (a node-ok S037-ben bekötve; a földre dobott tárgy felvétele az S039-ben jön)
+window.__game = { revival, kill: i => killHealth(healths[i]), es, combat, spawner, wizard, ranger, healer, foe: (type, dx = 200, dy = 0) => spawnEnemy(es, type, players[0].x + dx, players[0].y + dy), healths, dmg: (i, n, type) => applyDamage(healths[i], { amount: n, type }), anims, paperdoll, select, obstacles, abilities, menuUi, prog, actlog, skills, craftUi, tradeUi, trade, stations, craft: (i, id, n = 1) => craft(inventories[i], getRecipe(recipes, id), stationCtx(stations, players[i], skillsOf(skills, i)), n), game, split, splitRend, input, screen, tether, tc, vis, world, atlas, chunkRend, objects, objSprites, interact, warp, clock, dn, field, sorsko, menus, saveCtl, invUi, inventories, wallets, nodes, ground, drop: (i, id, n = 1) => dropItem(ground, id, n, players[i].x + 48, players[i].y, { toss: true }), give: (i, id, n = 1) => addItem(inventories[i], id, n), pay: (i, n = 1) => deposit(wallets[i], n) }; // give: fejlesztői segéd (a node-ok S037-ben bekötve; a földre dobott tárgy felvétele az S039-ben jön)
