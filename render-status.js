@@ -2,6 +2,7 @@
 // Importja: game-hud (hudLayout, menuLayout, menuOpen), game-status (listStatuses, effectsOf, STATUS_DEFS).
 import { hudLayout, menuLayout, menuOpen, HUD_CONFIG } from './game-hud.js';
 import { listStatuses, effectsOf, STATUS_DEFS } from './game-status.js';
+import { STRIP_LIFT } from './game-combathud.js'; // S074: a képesség-sáv a HUD és az ikon-sor között (nyitott menünél a sáv rejtve)
 
 export const STATUS_STYLE = Object.freeze({
   cell: 12, gap: 2, rise: 3,           // ikon-mező (px), köz, a HUD/menü fölötti távolság
@@ -28,7 +29,7 @@ export function statusLayout(index, n, vw, vh, menuIsOpen, cfg = HUD_CONFIG, st 
   const out = [];
   if (!Number.isInteger(n) || n <= 0 || ![vw, vh].every(Number.isFinite)) return out;
   const base = menuIsOpen ? menuLayout(index, vw, vh, cfg) : hudLayout(index, vw, vh, cfg);
-  const y = base.y - st.rise - st.cell, step = st.cell + st.gap;
+  const y = base.y - st.rise - st.cell - (menuIsOpen ? 0 : STRIP_LIFT), step = st.cell + st.gap;
   for (let k = 0; k < n; k++) {
     const x = index === 1 ? base.x + base.w - st.cell - k * step : base.x + k * step;
     out.push({ x, y, w: st.cell, h: st.cell });
