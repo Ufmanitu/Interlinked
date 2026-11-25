@@ -12,6 +12,7 @@ import { sanitizeField, fieldShare, fieldEffectiveL } from './game-field.js';
 import { SORSKO_CONFIG, createSorsko } from './game-sorsko.js';
 import { SECTIONS, captureSave, applySave } from './game-save.js';
 import * as I from './game-instance.js';
+import './test-mine.js'; // S077: a bánya-tesztek innen töltődnek (a lépésenkénti 6 fájl miatt; az S185 a test-index FILES-ébe viheti)
 
 const DT = 1 / 60;
 const lcg = s => () => ((s = (Math.imul(s, 1664525) + 1013904223) >>> 0) / 4294967296);
@@ -158,7 +159,7 @@ test('instance interakció: a valódi interakció-rendszeren át be- és kilép 
 
 test('instance + póráz: bent a póráz aktív (a Sorskő-mező nem hat), falak tisztelve, 900 kocka véletlen bemenettel', () => {
   const r = mk(); atDoor(r); enter(r, { force: true });
-  const walls = I.instanceColliders(r.ins), w = I.instanceWorld(r.ins), L = { x: 320, y: 200 };
+  const walls = I.instanceColliders(r.ins), w = I.instanceWorld(r.ins), L = { x: 160, y: 128 }; // S077: a bánya járatai szűkek: kisebb L, hogy a póráz megfeszüljön
   const field = sanitizeField({ id: 's', x: 0, y: 0, radius: SORSKO_CONFIG.levels[0] });
   eq(fieldShare(field, r.ps[0], r.ps[1]), 0); const le = fieldEffectiveL(field, r.ps[0], r.ps[1], L); eq(le.x, L.x); eq(le.y, L.y);
   const tether = createTetherSystem({ walls, L, k: 0.5 }), rnd = lcg(11); const dir = [[0, 0], [0, 0]]; let maxS = 0, moved = 0; const x0 = r.ps[0].x;
