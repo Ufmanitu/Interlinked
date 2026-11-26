@@ -13,6 +13,7 @@ import { SORSKO_CONFIG, createSorsko } from './game-sorsko.js';
 import { SECTIONS, captureSave, applySave } from './game-save.js';
 import * as I from './game-instance.js';
 import './test-mine.js'; // S077: a bánya-tesztek innen töltődnek (a lépésenkénti 6 fájl miatt; az S185 a test-index FILES-ébe viheti)
+import './test-dungeon.js'; // S079: ugyanígy a dungeon-tesztek
 
 const DT = 1 / 60;
 const lcg = s => () => ((s = (Math.imul(s, 1664525) + 1013904223) >>> 0) / 4294967296);
@@ -32,7 +33,7 @@ test('instance adat: def-ek, regiszter, szövegek (HU/EN), makró-bejáratok és
   const reg = I.createInstanceRegistry();
   eq(reg.errors.length, 0); eq(reg.dups.length, 0); assert(reg.defs.has(ID), 'mine_meadow');
   eq(I.auditInstances(reg, mm.entrances).length, 0, 'minden makró-bejárat célja létezik');
-  eq(I.auditInstances(reg, [{ id: 'x', target: 'nincs' }], {}).join(), 'entrance:x,generator:' + ID);
+  eq(I.auditInstances(reg, [{ id: 'x', target: 'nincs' }], {}).join(), 'entrance:x,' + [...reg.defs.keys()].map(k => 'generator:' + k).join(','));
   const hu = Object.keys(I.INSTANCE_TEXTS.hu).sort(), en = Object.keys(I.INSTANCE_TEXTS.en).sort();
   eq(hu.join(), en.join()); assert(hu.includes('save.err.instance') && hu.includes(reg.defs.get(ID).nameKey), 'kulcsok');
   for (const d of reg.defs.values()) assert(d.cols >= 12 && d.kind && Object.isFrozen(d), 'def: ' + d.id);

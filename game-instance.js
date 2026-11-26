@@ -4,11 +4,12 @@
 // (a Sorskő-mező messze van: f = 0 -> L_eff = L_normal). Belépés PÁROS: az egyik játékos kezdeményez, a társat a fonal átvonja. Kilépés ugyanoda
 // (a bejárat elé). Az instance állapota (hol vagyunk, a visszatérési pont, instance-enként egy JSON-zsák a későbbi lépéseknek) mentett;
 // a csempe-térkép a def-ből determinisztikusan újragenerálódik, ezért nem része a mentésnek.
-// A generátorok az INSTANCE_GENERATORS-ban vannak: 'mine' (S077, world-mine.js), az S079 (dungeon) új generátort ad; a 'room' helyőrző/teszt.
+// A generátorok az INSTANCE_GENERATORS-ban vannak: 'mine' (S077, world-mine.js), 'dungeon' (S079, world-dungeon.js); a 'room' helyőrző/teszt.
 import { createTileMap, setTile, getTile, mapToWalls, floodReach } from './world-tilemap.js';
 import { T, TILE_SIZE, isSolidId } from './world-tiles.js';
 import { mulberry32 } from './world-noise.js';
 import { generateMine } from './world-mine.js'; // S077
+import { generateDungeon, DUNGEON_DEFS, DUNGEON_TEXTS } from './world-dungeon.js'; // S079
 
 const S = TILE_SIZE;
 const isObj = v => !!v && typeof v === 'object' && !Array.isArray(v);
@@ -41,10 +42,11 @@ export function sanitizeInstanceConfig(src) {
 export const INSTANCE_DEFS = [
   // a makrótérkép 'meadow_mine' bejáratának célja (data-macro.js: target 'mine_meadow'); S077: generator 'mine' (world-mine.js), depth = a rétegek száma, a profil a MINE_PROFILES-ban
   { id: 'mine_meadow', kind: 'mine', nameKey: 'instance.mine_meadow', generator: 'mine', seed: 7601, cols: 48, rows: 66, depth: 3 },
+  ...DUNGEON_DEFS, // S079: dungeon_ruin (generator 'dungeon'; a makró-bejárat köti: S098/S124)
 ];
 export const INSTANCE_TEXTS = {
-  hu: { 'instance.mine_meadow': 'Réti bánya', 'save.err.instance': 'Hibás bánya-/barlang-adat a mentésben' },
-  en: { 'instance.mine_meadow': 'Meadow mine', 'save.err.instance': 'Invalid mine/dungeon data in the save' },
+  hu: { 'instance.mine_meadow': 'Réti bánya', 'save.err.instance': 'Hibás bánya-/barlang-adat a mentésben', ...DUNGEON_TEXTS.hu },
+  en: { 'instance.mine_meadow': 'Meadow mine', 'save.err.instance': 'Invalid mine/dungeon data in the save', ...DUNGEON_TEXTS.en },
 };
 
 export function validateInstanceDef(def, cfg = INSTANCE_CONFIG) {
@@ -99,7 +101,7 @@ function generateRoom(def) {
   const cx = cols >> 1;
   return { map, entry: { tx: cx, ty: rows - 6 }, exit: { tx: cx - 1, ty: rows - 3, w: 3, h: 1 } };
 }
-export const INSTANCE_GENERATORS = { room: generateRoom, mine: generateMine };
+export const INSTANCE_GENERATORS = { room: generateRoom, mine: generateMine, dungeon: generateDungeon };
 
 // Az instance világ-állapota a def-ből (determinisztikus): {id,kind,seed,cols,rows,map,ox,oy,bounds,entry{x,y},exit{x,y,w,h},walls[{x,y,w,h}]} (világ-pixel)
 export function buildInstanceWorld(def, cfg = INSTANCE_CONFIG, gens = INSTANCE_GENERATORS) {
