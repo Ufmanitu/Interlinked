@@ -24,11 +24,18 @@ export const ITEM_DEFS = [
   { id: 'workbench', stack: 1, weight: 20, value: 20, tags: ['ÁLLOMÁS'] },
   { id: 'furnace',   stack: 1, weight: 30, value: 24, tags: ['ÁLLOMÁS'] },
   { id: 'cookfire',  stack: 1, weight: 6,  value: 10, tags: ['ÁLLOMÁS'] },
+  // S078 bánya-nyersanyagok (a game-mining.js ORE_TABLE hivatkozik rájuk; a MINE_ORE_KINDS sorrendje: réz, szén, vas, ezüst, drágakő) + robbanótöltet (a craft: S139)
+  { id: 'copper_ore', stack: 99, weight: 2.5, value: 3,  tags: ['MATERIAL', 'ORE'] },
+  { id: 'coal',       stack: 99, weight: 1.5, value: 2,  tags: ['MATERIAL', 'FUEL'] },
+  { id: 'iron_ore',   stack: 99, weight: 3,   value: 5,  tags: ['MATERIAL', 'ORE'] },
+  { id: 'silver_ore', stack: 50, weight: 3,   value: 12, tags: ['MATERIAL', 'ORE'] },
+  { id: 'gem',        stack: 20, weight: 0.2, value: 40, tags: ['GEM'] },
+  { id: 'blast_charge', stack: 10, weight: 1, value: 25, tags: ['ROBBANÓANYAG'] },
 ];
 
 export const ITEM_TEXTS = {
-  hu: { wood: 'Fa', stone: 'Kő', fiber: 'Rost', herb: 'Gyógynövény', torch: 'Fáklya', shard: 'Sorsszilánk', axe: 'Fejsze', pickaxe: 'Csákány', sickle: 'Sarló', rope: 'Kötél', workbench: 'Munkapad', furnace: 'Kemence', cookfire: 'Főzőhely' },
-  en: { wood: 'Wood', stone: 'Stone', fiber: 'Fiber', herb: 'Herb', torch: 'Torch', shard: 'Fate Shard', axe: 'Axe', pickaxe: 'Pickaxe', sickle: 'Sickle', rope: 'Rope', workbench: 'Workbench', furnace: 'Furnace', cookfire: 'Cooking fire' },
+  hu: { wood: 'Fa', stone: 'Kő', fiber: 'Rost', herb: 'Gyógynövény', torch: 'Fáklya', shard: 'Sorsszilánk', axe: 'Fejsze', pickaxe: 'Csákány', sickle: 'Sarló', rope: 'Kötél', workbench: 'Munkapad', furnace: 'Kemence', cookfire: 'Főzőhely', copper_ore: 'Rézérc', coal: 'Szén', iron_ore: 'Vasérc', silver_ore: 'Ezüstérc', gem: 'Drágakő', blast_charge: 'Robbanótöltet' },
+  en: { wood: 'Wood', stone: 'Stone', fiber: 'Fiber', herb: 'Herb', torch: 'Torch', shard: 'Fate Shard', axe: 'Axe', pickaxe: 'Pickaxe', sickle: 'Sickle', rope: 'Rope', workbench: 'Workbench', furnace: 'Furnace', cookfire: 'Cooking fire', copper_ore: 'Copper ore', coal: 'Coal', iron_ore: 'Iron ore', silver_ore: 'Silver ore', gem: 'Gemstone', blast_charge: 'Blast charge' },
 };
 
 const ID_RE = /^[a-z][a-z0-9_]*$/;
